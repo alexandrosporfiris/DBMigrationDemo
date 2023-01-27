@@ -1,0 +1,18 @@
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet author="Alexandros Porfiris" id="test_dev">
+        <sql>
+            CREATE TABLE `test_table_dev` (
+            `Column 1` INT NULL,
+            `Column 2` INT NULL,
+            `Column 3` INT NULL,
+            `Column 4` INT NULL,
+            `Column 5` INT NULL
+            );
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>
