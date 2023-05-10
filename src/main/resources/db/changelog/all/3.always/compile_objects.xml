@@ -1,0 +1,61 @@
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
+
+    <changeSet author="Alexandros Porfiris" id="compile_objects" runAlways="true" runOrder="last">
+
+        <sql splitStatements="true" endDelimiter="/">
+            <![CDATA[
+            begin
+            FOR cur IN (SELECT OBJECT_NAME, OBJECT_TYPE, owner FROM all_objects WHERE object_type in ('PACKAGE','PACKAGE BODY') and owner = 'ATACAMA' AND status = 'INVALID' ) LOOP
+            BEGIN
+            if cur.OBJECT_TYPE = 'PACKAGE BODY' then
+            EXECUTE IMMEDIATE 'alter package "' || cur.owner || '"."' || cur.OBJECT_NAME || '" compile body';
+            else
+            EXECUTE IMMEDIATE 'alter ' || cur.OBJECT_TYPE || ' "' || cur.owner || '"."' || cur.OBJECT_NAME || '" compile';
+            end if;
+            EXCEPTION
+            WHEN OTHERS THEN NULL;
+            END;
+            end loop;
+            END;
+            /
+
+            begin
+            FOR cur IN (SELECT OBJECT_NAME, OBJECT_TYPE, owner FROM all_objects WHERE object_type in ('TRIGGER') and owner = 'ATACAMA' AND status = 'INVALID' ) LOOP
+            BEGIN
+            EXECUTE IMMEDIATE 'alter ' || cur.OBJECT_TYPE || ' "' ||  cur.owner || '"."' || cur.OBJECT_NAME || '" compile';
+            EXCEPTION
+            WHEN OTHERS THEN NULL;
+            END;
+            end loop;
+            END;
+            /
+            begin
+            FOR cur IN (
+                   SELECT OBJECT_NAME, OBJECT_TYPE, owner,
+                        (select count(1) from all_dependencies ad
+                         where ad.owner = ao.owner and name = OBJECT_NAME
+                        ) priority
+                   FROM all_objects ao
+                   WHERE object_type in ('TYPE','TYPE BODY') and owner = 'ATACAMA' AND status = 'INVALID'
+                   order by priority
+                ) LOOP
+            BEGIN
+            if cur.OBJECT_TYPE = 'TYPE BODY' then
+            EXECUTE IMMEDIATE 'alter type ' || cur.owner || '.' || cur.OBJECT_NAME || ' compile body';
+            else
+            EXECUTE IMMEDIATE 'alter ' || cur.OBJECT_TYPE || ' ' || cur.owner || '.' || cur.OBJECT_NAME || ' compile';
+            end if;
+            EXCEPTION
+            WHEN OTHERS THEN NULL;
+            END;
+            end loop;
+            END;
+           /
+            ]]>
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

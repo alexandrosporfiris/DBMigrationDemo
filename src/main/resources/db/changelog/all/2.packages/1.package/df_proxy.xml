@@ -1,0 +1,255 @@
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
+
+    <changeSet author="Alexandros Porfiris" id="df_proxy" runOnChange="true" >
+        <sql splitStatements="false"><![CDATA[
+            create or replace PACKAGE           "DF_PROXY"
+/******************************************************************************
+      NAME: DF_PROXY
+      PURPOSE:    This package retrieves all requested data.
+
+      REVISIONS:
+      Ver        Date        Author           Description
+      ---------  ----------  ---------------  ------------------------------------
+      1.0        02/09/2017  I.T.              Created the package
+      2.0        27/11/2017  I.T. & I.R.       Replace global tables
+      3.0        28/12/2020  N.V               Removal of f_get_all_chrg_xy (not needed, we have no non-capitalised commissions)
+      ** diff pirgr: getjcaccount, get_finclacc, getdbtraccountdbtr
+   ******************************************************************************/
+ is
+  function f_getcookie return number;
+
+  function get_add_working_days(p_days in number,
+                                p_dt   in date) return date;
+
+  procedure getadmlookup2(datalist in out df_stg_types.trecadmlookup2);
+
+  procedure getclacc(iauthid      in number,
+                     sauthtype    in char,
+                     bustypecd    in varchar2,
+                     agrmtypecd   in varchar2,
+                     confdntypecd in varchar2,
+                     currid       in number,
+                     accid        in number,
+                     username     in varchar2,
+                     cookie_id    out number,
+                     datalist     in out df_stg_types.trecclacc);
+
+  procedure getclaccdbtr(iauthid      in number,
+                         sauthtype    in char,
+                         bustypecd    in varchar2,
+                         agrmtypecd   in varchar2,
+                         confdntypecd in varchar2,
+                         currid       in number,
+                         accid        in number,
+                         contrid      in number,
+                         globalclntid in varchar2,
+                         username     in varchar2,
+                         cookie_id    out number,
+                         datalist     in out df_stg_types.trecclacc);
+
+  procedure getcmpheader(rprid     in number,
+                         cmpid     in number,
+                         username  in varchar2,
+                         cookie_id out number,
+                         headercmp in out df_stg_types.reccmpheader);
+
+  procedure getdbs(clntid    in number,
+                   claccid   in number,
+                   periodid  in number,
+                   username  in varchar2,
+                   cookie_id out number,
+                   datalist  in out df_stg_types.trecdbs);
+
+  procedure getglinvoices(clntid    in number,
+                          claccid   in number, --** I.R. NBGGP-222 22/03/2018
+                          categ     in varchar2, --** I.R. NBGGP-222 22/03/2018
+                          invtp     in varchar2, --** I.R. NBGGP-222 22/03/2018
+                          dtfrom    in date,
+                          dtto      in date,
+                          username  in varchar2,
+                          cookie_id out number,
+                          datalist  in out df_stg_types.trecglinvoices);
+
+  procedure getglinvoicesdbtr(dbtrid    in number,
+                              claccid   in number,
+                              categ     in varchar2,
+                              invtp     in varchar2,
+                              dtfrom    in date,
+                              dtto      in date,
+                              username  in varchar2,
+                              cookie_id out number,
+                              datalist  in out df_stg_types.trecglinvoices);
+
+  procedure getjcaccount(clnt_id   in number,
+                         claccid   in number,
+                         dtfrom    in date,
+                         dtto      in date,
+                         username  in varchar2,
+                         cookie_id out number,
+                         --datalist         IN OUT df_stg_types.trecJCAccountNBGR,
+                         --header           IN OUT df_stg_types.recJCAccountHeaderNBGR
+                         datalist in out df_stg_types.trecjcaccount,
+                         header   in out df_stg_types.recclacc);
+
+  procedure getjcaccountdbtr(dbtrid    in number,
+                             clidebid  in number,
+                             dtfrom    in date,
+                             dtto      in date,
+                             username  in varchar2,
+                             cookie_id out number,
+                             datalist  in out df_stg_types.trecjcaccount,
+                             header    in out df_stg_types.recclideb);
+
+  function get_prev_working_days(p_days in number,
+                                 p_dt   in date) return date;
+
+  procedure getsequence(clntid   in number,
+                        seq_name in varchar2,
+                        username in varchar2,
+                        ret_seq  out number);
+
+  procedure getuploadedfiles(auth_id   in number,
+                             authtype  in varchar2,
+                             username  in varchar2,
+                             cookie_id out number,
+                             datalist  out df_stg_types.trecuploadfiles);
+
+  procedure gw_getglinvoicesbd(clntid         in number,
+                               invno          in varchar2,
+                               categ          in varchar2, --** I.R. PIR-51 19/02/2019
+                               issuedt        in date,
+                               username       in varchar2,
+                               cookie_id      out number,
+                               glinvoicesbody in out df_stg_types.recglinvoicesbody);
+
+  procedure gw_getglinvoicesbddbtr(dbtrid         in number,
+                                   invno          in varchar2,
+                                   categ          in varchar2, --** I.R. PIR-51 19/02/2019
+                                   issuedt        in date,
+                                   username       in varchar2,
+                                   cookie_id      out number,
+                                   glinvoicesbody in out df_stg_types.recglinvoicesbody);
+
+  procedure limitofdates(histdays number,
+                         dtfrom_p in out date,
+                         dtto_p   in out date);
+
+  procedure logme(p_unit    varchar2,
+                  p_module  varchar2,
+                  p_message varchar2);
+
+  procedure sendextmailtotesla(senderid    in number,
+                               receiverid  in number,
+                               mailsubject in varchar2,
+                               mailbody    in varchar2,
+                               username    in varchar2,
+                               --      cookie_id          IN OUT    NUMBER,
+                               msgret out varchar2);
+
+  procedure sendextmailtoteslafortriggers(senderid    in number,
+                                          receiverid  in number,
+                                          mailsubject in varchar2,
+                                          mailbody    in varchar2,
+                                          username    in varchar2,
+                                          --      cookie_id          IN OUT    NUMBER,
+                                          msgret out varchar2);
+
+  procedure sendintmailtoproxima(rprid       in number,
+                                 mailsubject in varchar2,
+                                 mailbody    in varchar2,
+                                 username    in varchar2,
+                                 cookie_id   in out number,
+                                 msgret      out varchar2);
+
+  procedure setapprdemands(dbtrid    in number,
+                           demandid  in number,
+                           scomment  in varchar2,
+                           username  in varchar2,
+                           cookie_id in out number,
+                           msgret    out varchar2,
+                           daterec   in out df_stg_types.recapprdemands);
+
+  procedure setapprdemandsbulk(loadid    in number,
+                               msgret    out varchar2);
+
+  procedure seteligiblefordddemands (
+        dbtrid      IN          NUMBER,
+        demandid    IN          NUMBER,
+        scomment    IN          VARCHAR2,
+        username    IN          VARCHAR2,
+        cookie_id   IN OUT      NUMBER,
+        msgret      OUT         VARCHAR2,
+        daterec     IN OUT      df_stg_types.recapprdemands);
+
+  procedure setdisputedemands(dbtrid          in number,
+                              demandid        in number,
+                              requestedamount in number,
+                              scomment        in varchar2,
+                              code            in varchar2,
+                              username        in varchar2,
+                              cookie_id       in out number,
+                              msgret          out varchar2,
+                              daterec         in out df_stg_types.recdemanddispute);
+
+  procedure setemailmainapprdemands(dbtrid number,
+                                    rprid  number);
+
+  procedure setfinclacc(clntid          in number,
+                        accid           in number,
+                        requestedamount in number,
+                        username        in varchar2,
+                        cookie_id       in out number,
+                        msgret          out varchar2,
+                        daterec         in out df_stg_types.recfinclacc);
+
+  procedure setsonetoone(clntid    in number,
+                         demandid  in number,
+                         username  in varchar2,
+                         cookie_id in out number,
+                         msgret    out varchar2,
+                         daterec   in out df_stg_types.recsonetoonedemands);
+
+  procedure setuploadfiles(auth_id  in number,
+                           authtype in varchar2,
+                           username in varchar2,
+                           load_id  in number,
+                           msgret   out varchar2,
+                           datarec  in out df_stg_types.recuploadfiles);
+
+  PROCEDURE setCmpRepresentative(auth_id  IN NUMBER,
+                                 authtype IN VARCHAR2,
+                                 userName IN VARCHAR2,
+                                 cmp_rec  IN df_stg_types.trecCmpRepresentative,
+                                 msgRet   OUT VARCHAR2);
+
+  PROCEDURE setMirrorRepresentative (
+        cmpid         IN             NUMBER,
+        rprid         IN             NUMBER,
+        action        IN             VARCHAR2);
+
+  PROCEDURE setRprRoles(auth_id  IN NUMBER,
+                        authtype IN VARCHAR2,
+                        rprid    IN NUMBER,
+                        cmpid    IN NUMBER,
+                        roleCd   IN VARCHAR2,
+                        action   IN VARCHAR2,
+                        msgRet   OUT VARCHAR2);
+
+  procedure getkatholiko(auth_id   in number,
+                         authtype  in varchar2,
+                         claccid   in number,
+                         datefrom  in date,
+                         dateto    in date,
+                         username  in varchar2,
+                         cookie_id out number,
+                         datalist  in out df_stg_types.treckatholiko,
+                         header    in out df_stg_types.recclacc);
+
+            end;]]>
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

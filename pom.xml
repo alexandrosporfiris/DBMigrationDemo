@@ -6,7 +6,7 @@
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
 		<version>2.4.0</version>
-		<relativePath/> <!-- lookup parent from repository -->
+		<relativePath/>
 	</parent>
 	<groupId>com.example</groupId>
 	<artifactId>demodb</artifactId>
@@ -28,13 +28,23 @@
 		</dependency>
 
 		<dependency>
-			<groupId>mysql</groupId>
-			<artifactId>mysql-connector-java</artifactId>
-			<scope>compile</scope>
+			<groupId>com.oracle.database.jdbc</groupId>
+			<artifactId>ojdbc8</artifactId>
+			<version>21.3.0.0</version>
 		</dependency>
 	</dependencies>
 
 	<profiles>
+		<profile>
+			<id>init</id>
+			<activation>
+				<activeByDefault>true</activeByDefault>
+			</activation>
+			<properties>
+				<lane>init</lane>
+				<spring.profiles.active>init</spring.profiles.active>
+			</properties>
+		</profile>
 		<profile>
 			<id>dev</id>
 			<activation>
@@ -55,7 +65,7 @@
 	</profiles>
 
 	<build>
-		<finalName>dbMigration-${lane}</finalName>
+		<finalName>db-migration-${lane}</finalName>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>

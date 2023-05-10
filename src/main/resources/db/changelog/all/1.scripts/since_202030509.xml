@@ -1,0 +1,34 @@
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
+
+    <changeSet author="Alexandros Porfiris" context="all" id="ENBD-324">
+        <sql>
+            CREATE TABLE test_table_all(
+                Column_1 VARCHAR2(50) NOT NULL,
+                Column_2 VARCHAR2(50) NOT NULL);
+        </sql>
+
+    </changeSet>
+
+    <changeSet author="Alexandros Porfiris" context="enbd" id="ENBD-324.1">
+        <sql>
+            CREATE TABLE test_table_all(
+                                           Column_1 VARCHAR2(50) NOT NULL,
+                                           Column_2 VARCHAR2(50) NOT NULL);
+        </sql>
+
+    </changeSet>
+
+    <changeSet author="Alexandros Porfiris" context="abc" id="ENBD-324.1">
+        <sql>
+            CREATE TABLE test_table_all(
+                                           Column_1 VARCHAR2(50) NOT NULL,
+                                           Column_2 VARCHAR2(50) NOT NULL);
+        </sql>
+
+    </changeSet>
+
+
+</databaseChangeLog>

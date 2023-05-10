@@ -1,0 +1,25 @@
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
+
+    <changeSet author="Alexandros Porfiris" id="test_all">
+        <sql>
+            CREATE TABLE test_table_all(
+                Column_1 VARCHAR2(50) NOT NULL,
+                Column_2 VARCHAR2(50) NOT NULL);
+        </sql>
+        <rollback>
+
+        </rollback>
+    </changeSet>
+
+    <changeSet author="Alexandros Porfiris" id="test_all_1">
+        <sql>
+            ALTER TABLE test_table_all(
+                                           Column_1 VARCHAR2(50) NOT NULL,
+                                           Column_2 VARCHAR2(50) NOT NULL);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

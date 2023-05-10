@@ -1,0 +1,3966 @@
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
+
+    <changeSet author="Alexandros Porfiris"  id="df_proxy_body" runOnChange="true">
+        <sql splitStatements="false"><![CDATA[
+            create
+            or replace package body         df_proxy
+---------------------------------------------------------------------------------------------------
+-- Version 6.0 2019-05-20
+-- New rounding rules OK
+/******************************************************************************
+      NAME: DF_PROXY
+      PURPOSE:    This package retrieves all requested data.
+
+      REVISIONS:
+      Ver        Date        Author           Description
+      ---------  ----------  ---------------  ------------------------------------
+      1.0        02/09/2017  I.T.              Created the package
+      2.0        27/11/2017  I.T. & I.R.       Replace global tables
+      3.0        28/12/2020  N.V               Removal of f_get_all_chrg_xy (not needed, we have no non-capitalised commissions)
+      ** diff pirgr: getjcaccount, get_finclacc, getdbtraccountdbtr
+   ******************************************************************************/
+ is
+
+  history_days int;
+
+  function
+            f_getcookie return number is
+            begin
+            return sys_xy_print_seq.nextval;
+            end;
+
+  function
+            get_add_working_days(p_days in number,
+                                p_dt   in date) return date is
+            begin
+            return df_tesla_util.add_working_days(p_days, p_dt);
+            end;
+
+  procedure getadmlookup2(datalist in out df_stg_types.trecadmlookup2)
+            is
+            begin
+            select *
+                       bulk collect
+            into datalist
+            from (
+                     (select null               i_lkup_id,
+                             'CURRENCY'        s_lkup_table,
+                             'TYPE'             s_lkup_col,
+                             to_char(I_CURR_ID) s_val,
+                             S_CURR_CD          s_val_label,
+                             1                  lang_id
+                      from ADM_CURRENCY
+                      where B_ACTIVE = 'Y'
+                      union
+                      select null               i_lkup_id,
+                             'CURRENCY'         s_lkup_table,
+                             'TYPE'             s_lkup_col,
+                             to_char(I_CURR_ID) s_val,
+                             S_CURR_CD          s_val_label,
+                             2                  lang_id
+                      from ADM_CURRENCY
+                      where B_ACTIVE = 'Y')
+                     union all
+                     (select null           i_lkup_id,
+                             'ADM_COUNTRY'  s_lkup_table,
+                             'S_COUNTRY_CD' s_lkup_col,
+                             s_country_cd   s_val,
+                             s_country_nm   s_val_label,
+                             1              lang_id
+                      from adm_country
+                      union
+                      select null                              i_lkup_id,
+                             'ADM_COUNTRY'                     s_lkup_table,
+                             'S_COUNTRY_CD'                    s_lkup_col,
+                             s_country_cd                      s_val,
+                             nvl(s_country_host, s_country_nm) s_val_label,
+                             2                                 lang_id
+                      from adm_country)
+                     union all
+                     (select null                  i_lkup_id,
+                             'ADM_COUNTRY'         s_lkup_table,
+                             'I_COUNTRY_ID'        s_lkup_col,
+                             to_char(I_COUNTRY_ID) s_val,
+                             s_country_nm          s_val_label,
+                             1                     lang_id
+                      from adm_country
+                      union
+                      select null                  i_lkup_id,
+                             'ADM_COUNTRY'         s_lkup_table,
+                             'I_COUNTRY_ID'        s_lkup_col,
+                             to_char(I_COUNTRY_ID) s_val,
+                             s_country_nm          s_val_label,
+                             2                     lang_id
+                      from adm_country)
+                     union all
+                     select null                   i_lkup_id,
+                            'ADM_DISAPPROVAL_CODE' s_lkup_table,
+                            'S_DISAPPR_CD'         s_lkup_col,
+                            c.s_disappr_cd         s_val,
+                            v.s_disappr_descr      s_val_label,
+                            v.i_lang_id            lang_id
+                     from adm_disapproval_code c,
+                          adm_disapproval_code_visual v
+                     where c.s_disappr_cd = v.s_disappr_cd
+                     union all
+                     select null              i_lkup_id,
+                            'ADM_DEMAND_TYPE' s_lkup_table,
+                            'S_DEMAND_TP'     s_lkup_col,
+                            c.s_demand_tp     s_val,
+                            v.s_demand_nm     s_val_label,
+                            v.i_lang_id       lang_id
+                     from adm_demand_type c,
+                          adm_demand_type_visual v
+                     where c.s_demand_tp = v.s_demand_tp
+                     union all
+                     select null              i_lkup_id,
+                            'ADM_PAYMNT_TYPE' s_lkup_table,
+                            'S_PAYMNT_TP'     s_lkup_col,
+                            c.s_paymnt_tp     s_val,
+                            v.s_paymnt_nm     s_val_label,
+                            v.i_lang_id       lang_id
+                     from adm_paymnt_type c,
+                          adm_paymnt_type_visual v
+                     where c.s_paymnt_tp = v.s_paymnt_tp
+                     union all
+                     select null              i_lkup_id,
+                            'ADM_CRNOTE_TYPE' s_lkup_table,
+                            'S_CRNOTE_TP'
+                                              s_lkup_col,
+                            c.s_crnote_tp     s_val,
+                            v.s_crnote_nm     s_val_label,
+                            v.i_lang_id       lang_id
+                     from adm_crnote_type c,
+                          adm_crnote_type_visual v
+                     where c.s_crnote_tp = v.s_crnote_tp
+                     union all
+                     (select null             I_LKUP_ID,
+                             'ADM_ORGQUERY'   S_LKUP_TABLE,
+                             'I_QR_ID'        S_LKUP_COL,
+                             to_char(I_QR_ID) S_VAL,
+                             S_QR_SHORT_DESC  S_VAL_LABEL,
+                             1                LANG_ID
+                      from adm_orgquery
+                      where (S_QR_TP = 'R' and s_entity is not null and b_isactive = 'Y')
+                         or (S_QR_TP = 'L' and b_isactive = 'Y')
+                      union
+                      select null             I_LKUP_ID,
+                             'ADM_ORGQUERY'   S_LKUP_TABLE,
+                             'I_QR_ID'        S_LKUP_COL,
+                             to_char(I_QR_ID) S_VAL,
+                             S_QR_SHORT_DESC  S_VAL_LABEL,
+                             2                LANG_ID
+                      from adm_orgquery
+                      where (S_QR_TP = 'R' and s_entity is not null and b_isactive = 'Y')
+                         or (S_QR_TP = 'L' and b_isactive = 'Y'))
+                     union all
+                     (select i_lkup_id, s_lkup_table, s_lkup_col, s_val, max(s_val_label), lang_id
+                      from (select null          i_lkup_id,
+                                   'ADM_DOCTYPE' s_lkup_table,
+                                   'S_DOCTP'     s_lkup_col,
+                                   c.s_demand_tp s_val,
+                                   v.s_demand_nm s_val_label,
+                                   v.i_lang_id   lang_id
+                            from adm_demand_type c,
+                                 adm_demand_type_visual v
+                            where c.s_demand_tp = v.s_demand_tp
+                            union
+                            select null          i_lkup_id,
+                                   'ADM_DOCTYPE' s_lkup_table,
+                                   'S_DOCTP'     s_lkup_col,
+                                   c.s_paymnt_tp s_val,
+                                   v.s_paymnt_nm s_val_label,
+                                   v.i_lang_id   lang_id
+                            from adm_paymnt_type c,
+                                 adm_paymnt_type_visual v
+                            where c.s_paymnt_tp = v.s_paymnt_tp
+                            union
+                            select null          i_lkup_id,
+                                   'ADM_DOCTYPE' s_lkup_table,
+                                   'S_DOCTP'     s_lkup_col,
+                                   c.s_crnote_tp s_val,
+                                   v.s_crnote_nm s_val_label,
+                                   v.i_lang_id   lang_id
+                            from adm_crnote_type c,
+                                 adm_crnote_type_visual v
+                            where c.s_crnote_tp = v.s_crnote_tp)
+                      group by i_lkup_id, s_lkup_table, s_lkup_col, s_val, lang_id)
+                     union all
+                     select null             i_lkup_id,
+                            'ADM_PREPAYMENT' s_lkup_table,
+                            'C_PREPPAY_TP'
+                                             s_lkup_col,
+                            s_val,
+                            s_val_label,
+                            lang_id
+                     from adm_lookup_2
+                     where s_lkup_table = 'PREPAYMENT'
+                       and s_lkup_col = 'finance.type'
+                     union all
+                     select null
+                                                i_lkup_id,
+                            'ADM_PREPAYMENT'    s_lkup_table,
+                            'S_PREPAYMNT_CAUSE' s_lkup_col,
+                            s_val,
+                            s_val_label,
+                            lang_id
+                     from adm_lookup_2
+                     where s_lkup_table = 'PREPAYMENT'
+                       and s_lkup_col = 'finance.reason'
+                     union all
+                     select null i_lkup_id, s_lkup_table, s_lkup_col, s_val, s_val_label, lang_id
+                     from adm_lookup_2
+                     where s_lkup_table = 'SUBMODE'
+                       and s_lkup_col = 'S_DMD_SUBMODE'
+                     union all
+                     select null i_lkup_id,
+                            s_lkup_table,
+                            s_lkup_col,
+                            s_val,
+                            s_val_label,
+                            lang_id
+                     from adm_lookup_2
+                     where s_lkup_table = 'SUBMODE'
+                       and s_lkup_col = 'S_PMNT_SUBMODE');
+
+            end;
+
+  procedure getclacc(iauthid      in number,
+                     sauthtype    in char,
+                     bustypecd    in varchar2,
+                     agrmtypecd   in varchar2,
+                     confdntypecd in varchar2,
+                     currid       in number,
+                     accid        in number,
+                     username     in varchar2,
+                     cookie_id    out number,
+                     datalist     in out df_stg_types.trecclacc)
+            is
+            begin
+
+    --** I.R. & I.T. 01/03/2019 NBG-85 START
+    --** IT SHOULD BE CALLED ONLY AS CLIENT ('C')
+    if
+            sauthtype = 'D' then
+      raise_application_error(-20343, 'INVALID AUTHTYPE');
+            end if;
+    --** I.R. & I.T. 01/03/2019 NBG-85 END
+
+    --Get cookie id to send
+    cookie_id
+            := f_getcookie;
+            select iauthid,
+                   sauthtype,
+                   i_cmp_id,
+                   s_cmp_snm,
+                   s_cmp_nm,
+                   s_trcode_desc,
+                   s_vat_nr,
+                   i_clnt_id,
+                   s_addr,
+                   s_zip_cd,
+                   s_city,
+                   s_area,
+                   s_office_tel,
+                   i_contr_id,
+                   c_bustype_cd,
+                   c_agrmtype_cd,
+                   c_confdntype_cd,
+                   i_acc_id,
+                   c_paymnt_tp,
+                   i_curr_id,
+                   s_acc_nbr,
+                   s_curr_cd,
+                   clacc_fl,
+                   contract_fl,
+                   client_fl,
+                   d_last_capital_dt,
+                   d_next_capital_dt,
+                   b_isactive,
+                   d_status_final_odu,
+                   d_status_liability,
+                   s_crs_id,
+                   d_fundlimit_end_dt,
+                   d_end_dt,
+                   clacc_cat,
+                   i_basel_cat_tp,
+                   i_group_id,
+                   country_iso,
+                   s_nace_code,
+                   bankbranch,
+                   d_start_acc_dt,
+                   d_stop_interest,
+                   d_redeem_dt,
+                   cookie_id,
+                   sysdate,
+                   username,
+                   null, -- s_irs_nm
+                   null, -- i_global_clnt_id  --** I.R. ENBD 26/06/2018
+                   --** I.R. FLF-32 03/06/2019 START
+                   (select adm_products.s_visual_name
+                    from adm_products
+                    where v_clacc.s_product_subtype = adm_products.productcode
+                      and rownum < 2) as s_product_visual
+                   --** I.R. FLF-32 03/06/2019 END
+                bulk collect
+            into datalist
+            from v_clacc
+            where exists(select 1
+                         from v_clideb v
+                         where v.i_clnt_id = v_clacc.i_clnt_id
+                           --                    AND DECODE(sauthtype, 'D', v.i_dbtr_id, 'C', v.i_clnt_id) = iauthid --** I.R. & I.T. 01/03/2019 NBG-85 COMMENT
+                           and v.i_clnt_id = iauthid --** I.R. & I.T. 01/03/2019 NBG-85
+                           and v_clacc.i_acc_id = v.i_acc_id --** I.R. & I.T. 01/03/2019 NBG-85
+                )
+              and v_clacc.c_bustype_cd = nvl(bustypecd, v_clacc.c_bustype_cd)
+              and v_clacc.c_agrmtype_cd = nvl(agrmtypecd, v_clacc.c_agrmtype_cd)
+              and v_clacc.c_confdntype_cd = nvl(confdntypecd, v_clacc.c_confdntype_cd)
+              and v_clacc.i_curr_id = nvl(currid, v_clacc.i_curr_id)
+              and v_clacc.i_acc_id = nvl(accid, v_clacc.i_acc_id)
+              and d_end_dt is null
+              --** I.R. & I.T. 01/03/2019 NBG-85 COMMENT START
+              --            AND CASE
+              --                WHEN sauthtype = 'D' THEN v_clacc.c_confdntype_cd
+              --                WHEN sauthtype = 'C' THEN 'X'
+              --            END <> 'C'
+              --** I.R. & I.T. 01/03/2019 NBG-85 COMMENT END
+
+              --** I.R. & I.T. 01/03/2019 NBG-85 START
+              and exists(select 1
+                         from clideb_acc ca
+                         where ca.i_clnt_id = v_clacc.i_clnt_id
+                           and ca.i_clnt_id = iauthid
+                           and ca.d_end_dt is null
+                           and v_clacc.i_acc_id = ca.i_acc_id)
+--** I.R. & I.T. 01/03/2019 NBG-85 END
+            ;
+
+            end;
+
+  procedure getclaccdbtr(iauthid      in number,
+                         sauthtype    in char,
+                         bustypecd    in varchar2,
+                         agrmtypecd   in varchar2,
+                         confdntypecd in varchar2,
+                         currid       in number,
+                         accid        in number,
+                         contrid      in number,
+                         globalclntid in varchar2,
+                         username     in varchar2,
+                         cookie_id    out number,
+                         datalist     in out df_stg_types.trecclacc)
+            is
+            begin
+
+    --** I.R. & I.T. 01/03/2019 NBG-85 START
+    --** IT SHOULD BE CALLED ONLY AS DEBTOR ('D')
+    if
+            sauthtype = 'C' then
+      raise_application_error(-20343, 'INVALID AUTHTYPE');
+            end if;
+    --** I.R. & I.T. 01/03/2019 NBG-85 END
+
+    --Get cookie id to send
+    cookie_id
+            := f_getcookie;
+
+    --    SELECT distinct  iauthid,
+    --                     sauthtype,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     clcontract_c_bustype_cd,
+    --                     clcontract_c_agrmtype_cd,
+    --                     clcontract_c_confdntype_cd,
+    --                     i_acc_id,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     s_curr_cd,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     null,
+    --                     cookie_id,
+    --                     sysdate,
+    --                     userName,
+    --                     null, -- s_irs_nm
+    --                     i_global_clnt_id
+    --      BULK COLLECT INTO datalist
+    --      FROM   v_clideb_acc
+    --       WHERE v_clideb_acc.i_dbtr_id = iauthid
+    --       AND   v_clideb_acc.clcontract_c_bustype_cd    = NVL (bustypecd, v_clideb_acc.clcontract_c_bustype_cd)
+    --       AND   v_clideb_acc.clcontract_c_agrmtype_cd   = NVL (agrmtypecd, v_clideb_acc.clcontract_c_agrmtype_cd)
+    --       AND   v_clideb_acc.clcontract_c_confdntype_cd = 'N'
+    --       AND   v_clideb_acc.clideb_acc_i_curr_id       = NVL (currid, v_clideb_acc.clideb_acc_i_curr_id)
+    --       AND   v_clideb_acc.i_acc_id        = NVL (accid, v_clideb_acc.i_acc_id )
+    --       AND   v_clideb_acc.clacc_d_end_dt IS NULL
+    --
+    --       and v_clideb_acc.i_contr_id = NVL (contrid, v_clideb_acc.i_contr_id )
+    --       and COALESCE(v_clideb_acc.i_global_clnt_id, -1) = COALESCE(globalclntid, v_clideb_acc.i_global_clnt_id, -1);
+            select distinct iauthid,
+                            sauthtype,
+                            v_clacc.i_cmp_id,
+                            v_clacc.s_cmp_snm,
+                            v_clacc.s_cmp_nm,
+                            v_clacc.s_trcode_desc,
+                            v_clacc.s_vat_nr,
+                            v_clacc.i_clnt_id,
+                            v_clacc.s_addr,
+                            v_clacc.s_zip_cd,
+                            v_clacc.s_city,
+                            v_clacc.s_area,
+                            v_clacc.s_office_tel,
+                            v_clacc.i_contr_id,
+                            v_clacc.c_bustype_cd,
+                            v_clacc.c_agrmtype_cd,
+                            v_clacc.c_confdntype_cd,
+                            v_clacc.i_acc_id,
+                            v_clacc.c_paymnt_tp,
+                            v_clacc.i_curr_id,
+                            v_clacc.s_acc_nbr,
+                            v_clacc.s_curr_cd,
+                            v_clacc.clacc_fl,
+                            v_clacc.contract_fl,
+                            v_clacc.client_fl,
+                            v_clacc.d_last_capital_dt,
+                            v_clacc.d_next_capital_dt,
+                            v_clacc.b_isactive,
+                            v_clacc.d_status_final_odu,
+                            v_clacc.d_status_liability,
+                            v_clacc.s_crs_id,
+                            v_clacc.d_fundlimit_end_dt,
+                            v_clacc.d_end_dt,
+                            v_clacc.clacc_cat,
+                            v_clacc.i_basel_cat_tp,
+                            v_clacc.i_group_id,
+                            v_clacc.country_iso,
+                            v_clacc.s_nace_code,
+                            v_clacc.bankbranch,
+                            v_clacc.d_start_acc_dt,
+                            v_clacc.d_stop_interest,
+                            v_clacc.d_redeem_dt,
+                            cookie_id,
+                            sysdate,
+                            username,
+                            null, -- s_irs_nm
+
+                            --           clideb_acc.i_global_clnt_id
+                            case
+                                when globalclntid is null then
+                                    (select clideb_acc.i_global_clnt_id
+                                     from clideb_acc
+                                     where clideb_acc.i_clnt_id = v_clacc.i_clnt_id
+                                       and clideb_acc.i_dbtr_id = iauthid
+                                       and rownum = 1)
+                                else
+                                    clideb_acc.i_global_clnt_id
+                                end,
+                            --** I.R. FLF-32 03/06/2019 START
+                            (select adm_products.s_visual_name
+                             from adm_products
+                             where v_clacc.s_product_subtype = adm_products.productcode
+                               and rownum < 2) as s_product_visual
+                            --** I.R. FLF-32 03/06/2019 END
+                bulk collect
+            into datalist
+            from v_clacc,
+                 clideb_acc
+            where clideb_acc.i_dbtr_id = iauthid
+              and clideb_acc.i_clnt_id = v_clacc.i_clnt_id
+              and clideb_acc.i_acc_id = v_clacc.i_acc_id
+              and coalesce(clideb_acc.i_global_clnt_id, '-1') =
+                  coalesce(globalclntid, clideb_acc.i_global_clnt_id, '-1')
+              and v_clacc.c_bustype_cd = nvl(bustypecd, v_clacc.c_bustype_cd)
+              and v_clacc.c_agrmtype_cd = nvl(agrmtypecd, v_clacc.c_agrmtype_cd)
+              and v_clacc.c_confdntype_cd = 'N'
+              and v_clacc.i_curr_id = nvl(currid, v_clacc.i_curr_id)
+              and v_clacc.i_acc_id = nvl(accid, v_clacc.i_acc_id)
+              and v_clacc.d_end_dt is null
+              and v_clacc.i_contr_id = nvl(contrid, v_clacc.i_contr_id)
+              --** I.R. & I.T. 01/03/2019 NBG-85 START
+              and exists(select 1
+                         from clideb_acc ca
+                         where ca.i_clnt_id = v_clacc.i_clnt_id
+                           and ca.i_dbtr_id = iauthid
+                           and ca.d_end_dt is null
+                           and v_clacc.i_acc_id = ca.i_acc_id)
+--** I.R. & I.T. 01/03/2019 NBG-85 END
+            ;
+
+            end;
+
+  procedure getcmpheader(rprid     in number,
+                         cmpid     in number,
+                         username  in varchar2,
+                         cookie_id out number,
+                         headercmp in out df_stg_types.reccmpheader)
+            is
+
+            begin
+
+    --Get cookie id to send
+    cookie_id
+            := f_getcookie;
+
+            BEGIN
+      --** I.R. 10/06/2019 NBG-100
+
+            select rprid,
+                   company.i_cmp_id,
+                   trim(substr(company.s_cmp_snm, 1, 20)) || case
+                                                                 when length(company.s_cmp_snm) > 20 then
+                                                                     '...'
+                                                                 else
+                                                                     ''
+                       end,
+                   company.s_vat_nr,
+                   nvl(company_address.s_addr, ' ') || ',  ' || nvl(company_address.s_zip_cd, ' ') || ',  ' ||
+                   trim(nvl(company_address.s_city, ' ')) || '   ' ||
+                   trim(nvl(company_address.s_area, ' ')),
+                   cookie_id,
+                   sysdate,
+                   username
+            into headercmp
+            from company,
+                 company_address
+            where (company_address.i_cmp_id(+) = company.i_cmp_id)
+              and (nvl(company_address.i_cmpaddrtp_id, 1) = 1)
+              and company.i_cmp_id = cmpid
+              and rownum < 2;
+
+            EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        --** I.R. 10/06/2019 NBG-100 START
+
+        NULL; -- IGNORE THE ERROR
+
+            END; --** I.R. 10/06/2019 NBG-100 END
+
+    --**       );
+
+    --**          sqlstr :=
+    --**          ' SELECT   *
+    --**          FROM     TESLA_CMP_HEADER_T
+    --**          WHERE    cookie_id = ' || cookie_id;
+
+    --**          OPEN datadefs FOR sqlstr;
+    --**          FETCH datadefs INTO headerCmp;
+    --**          CLOSE datadefs;
+
+            end;
+
+  procedure getdbs(clntid    in number,
+                   claccid   in number,
+                   periodid  in number,
+                   username  in varchar2,
+                   cookie_id out number,
+                   datalist  in out df_stg_types.trecdbs)
+            is
+
+            begin
+
+    --Get cookie id to send
+    cookie_id
+            := f_getcookie;
+    p_tesla_gobi_dbs
+            (clntid, claccid, periodid, username, cookie_id);
+
+            select * bulk collect
+            into datalist
+            from tesla_dbs_t
+            where tesla_dbs_t.cookie_id = cookie_id;
+
+            end;
+
+  procedure getemailaddr(iauthid     in number,
+                         sauthtype   in char,
+                         genericid   in number,
+                         genericidtp in varchar,
+                         username    in varchar2,
+                         cookie_id   out number,
+                         datalist    in out df_stg_types.trecemailaddr)
+            is
+            begin
+
+    --Get cookie id to send
+    cookie_id
+            := f_getcookie;
+            with set1 as
+                     (select distinct case
+                                          when sauthtype = 'C' then
+                                              v_clideb.i_dbtr_id
+                                          when sauthtype = 'D' then
+                                              v_clideb.i_clnt_id
+                                          end as ids
+                      from v_clideb
+                      where case
+                                when sauthtype = 'C' then
+                                    v_clideb.i_clnt_id
+                                when sauthtype = 'D' then
+                                    v_clideb.i_dbtr_id
+                                end = iauthid
+                        and case
+                                when genericidtp = 'I_CLIDEB_ID' then
+                                    v_clideb.i_clideb_id
+                                when genericidtp = 'I_ACC_ID' then
+                                    v_clideb.i_acc_id
+                                end = genericid)
+            select iauthid,
+                   company_contact.s_email,
+                   cookie_id,
+                   sysdate,
+                   username
+                       bulk collect
+            into datalist
+            from company_address,
+                 company_contact,
+                 set1
+            where company_address.i_cmp_id = case
+                                                 when sauthtype = 'C' then
+                                                         (select i_cmp_id from debtor where i_dbtr_id = set1.ids)
+                                                 when sauthtype = 'D' then
+                                                         (select i_cmp_id from client where i_clnt_id = set1.ids)
+                end
+              and company_address.i_cmpaddr_id = company_contact.i_cmpaddr_id
+              and company_address.i_cmpaddrtp_id = 1;
+
+            end;
+
+  procedure getglinvoices(clntid    in number,
+                          claccid   in number, --** I.R. NBGGP-222 22/03/2018
+                          categ     in varchar2, --** I.R. NBGGP-222 22/03/2018
+                          invtp     in varchar2, --** I.R. NBGGP-222 22/03/2018
+                          dtfrom    in date,
+                          dtto      in date,
+                          username  in varchar2,
+                          cookie_id out number,
+                          datalist  in out df_stg_types.trecglinvoices)
+            is
+    datefrom date;
+    dateto
+            date;
+
+    TYPE
+            reftyp IS REF CURSOR;
+    datadefs
+            reftyp;
+    sqlstr
+            VARCHAR2 (1000);
+
+            begin
+
+    --Get History limit
+            select n_param_val_nbr
+            into history_days
+            from adm_param
+            where s_param_cd = 'SYS_WEB_HISTORY_DAYS';
+
+--na blav mono gia tris mhnew pisw
+
+            if
+            dtfrom is null then
+      datefrom := trunc(sysdate) - history_days;
+    elsif
+            dtfrom < trunc(sysdate) - history_days then
+      datefrom := trunc(sysdate) - history_days;
+            else
+      datefrom := trunc(dtfrom);
+            end if;
+
+    --Get cookie id to send
+
+    cookie_id
+            := f_getcookie;
+
+            INSERT INTO tesla_glinvoices_t
+                (SELECT a.i_inv_id,
+                        a.i_clnt_id,
+                        a.d_issue_dt,
+                        a.s_inv_no,
+                        a.d_start_dt,
+                        a.d_end_dt,
+                        a.s_purpose,
+                        a.i_acc_id,
+                        a.c_business_tp,
+                        a.c_agreem_tp,
+                        a.c_conf_tp,
+                        a.i_curr_id,
+                        a.i_inv_tp,
+                        a.n_inter_amnt,
+                        a.n_inter_vat_amnt,
+                        a.n_inter_euro_amnt,
+                        a.n_inter_euro_vat_amnt,
+                        a.n_gpd_amnt,
+                        a.n_gpd_vat_amnt,
+                        a.n_gpd_euro_amnt,
+                        a.n_gpd_euro_vat_amnt,
+                        a.n_ppk_amnt,
+                        a.n_ppk_vat_amnt,
+                        a.n_ppk_euro_amnt,
+                        a.n_ppk_euro_vat_amnt,
+                        a.n_oth_amnt,
+                        a.n_oth_vat_amnt,
+                        a.n_oth_euro_amnt,
+                        a.n_oth_euro_vat_amnt,
+                        a.d_reg_dt,
+                        a.d_trans_dt,
+                        a.c_tradone,
+                        a.c_categ,
+                        a.gl_pel,
+                        a.s_vat_nr,
+                        cookie_id,
+                        SYSDATE,
+                        username
+                 FROM gl_invoices a
+                 WHERE trunc(a.d_issue_dt) BETWEEN dtfrom AND nvl(dtto, trunc(SYSDATE)) -- trunc(a.d_issue_dt))
+                   AND a.i_clnt_id = clntid
+                   AND a.i_clideb_id IS NULL --** I.R. ENBD 26/06/2018
+                );
+
+            sqlstr
+            := ' SELECT   *
+              FROM     tesla_glinvoices_t
+              WHERE    cookie_id = ' || cookie_id;
+            OPEN datadefs FOR sqlstr;
+
+            FETCH datadefs BULK COLLECT INTO datalist;
+            CLOSE datadefs;
+
+            end;
+
+  procedure getglinvoicesdbtr(dbtrid    in number,
+                              claccid   in number,
+                              categ     in varchar2,
+                              invtp     in varchar2,
+                              dtfrom    in date,
+                              dtto      in date,
+                              username  in varchar2,
+                              cookie_id out number,
+                              datalist  in out df_stg_types.trecglinvoices)
+            is
+    datefrom date;
+    dateto
+            date;
+
+    TYPE
+            reftyp IS REF CURSOR;
+    datadefs
+            reftyp;
+    sqlstr
+            VARCHAR2 (1000);
+
+            begin
+
+    --Get History limit
+            select n_param_val_nbr
+            into history_days
+            from adm_param
+            where s_param_cd = 'SYS_WEB_HISTORY_DAYS';
+
+--na blav mono gia tris mhnew pisw
+
+            if
+            dtfrom is null then
+      datefrom := trunc(sysdate) - history_days;
+    elsif
+            dtfrom < trunc(sysdate) - history_days then
+      datefrom := trunc(sysdate) - history_days;
+            else
+      datefrom := trunc(dtfrom);
+            end if;
+
+    --Get cookie id to send
+
+    cookie_id
+            := f_getcookie;
+
+            INSERT INTO tesla_glinvoices_t
+                (SELECT a.i_inv_id,
+                        b.i_dbtr_id,
+                        a.d_issue_dt,
+                        a.s_inv_no,
+                        a.d_start_dt,
+                        a.d_end_dt,
+                        a.s_purpose,
+                        a.i_acc_id,
+                        a.c_business_tp,
+                        a.c_agreem_tp,
+                        a.c_conf_tp,
+                        a.i_curr_id,
+                        a.i_inv_tp,
+                        a.n_inter_amnt,
+                        a.n_inter_vat_amnt,
+                        a.n_inter_euro_amnt,
+                        a.n_inter_euro_vat_amnt,
+                        a.n_gpd_amnt,
+                        a.n_gpd_vat_amnt,
+                        a.n_gpd_euro_amnt,
+                        a.n_gpd_euro_vat_amnt,
+                        a.n_ppk_amnt,
+                        a.n_ppk_vat_amnt,
+                        a.n_ppk_euro_amnt,
+                        a.n_ppk_euro_vat_amnt,
+                        a.n_oth_amnt,
+                        a.n_oth_vat_amnt,
+                        a.n_oth_euro_amnt,
+                        a.n_oth_euro_vat_amnt,
+                        a.d_reg_dt,
+                        a.d_trans_dt,
+                        a.c_tradone,
+                        a.c_categ,
+                        a.gl_pel,
+                        a.s_vat_nr,
+                        cookie_id,
+                        SYSDATE,
+                        username
+                 FROM gl_invoices a,
+                      v_clideb b
+                 WHERE a.i_clideb_id = b.i_clideb_id
+                   AND a.i_clnt_id = b.i_clnt_id
+                   AND trunc(a.d_issue_dt) BETWEEN dtfrom AND nvl(dtto, trunc(SYSDATE))
+                   AND b.i_dbtr_id = dbtrid
+                   AND b.clcontract_c_confdntype_cd = 'N'
+                   AND a.i_clideb_id IS NOT NULL
+                );
+
+            sqlstr
+            := ' SELECT   *
+              FROM     tesla_glinvoices_t
+              WHERE    cookie_id = ' || cookie_id;
+            OPEN datadefs FOR sqlstr;
+
+            FETCH datadefs BULK COLLECT INTO datalist;
+            CLOSE datadefs;
+
+            end;
+
+  procedure getjcaccount(clnt_id   in number,
+                         claccid   in number,
+                         dtfrom    in date,
+                         dtto      in date,
+                         username  in varchar2,
+                         cookie_id out number,
+                         datalist  in out df_stg_types.trecjcaccount,
+                         header    in out df_stg_types.recclacc)
+            is
+    datefrom     date;
+    dateto
+            date;
+    init_bal
+            number;
+    history_days
+            int;
+            begin
+
+    -- DATES ++
+    --Get History limit
+            select n_param_val_nbr
+            into history_days
+            from adm_param
+            where s_param_cd = 'SYS_WEB_HISTORY_DAYS';
+
+            if
+            dtfrom is null then
+      datefrom := trunc(sysdate) - history_days;
+    elsif
+            dtfrom < trunc(sysdate) - history_days then
+      datefrom := trunc(sysdate) - history_days;
+            else
+      datefrom := trunc(dtfrom);
+            end if;
+
+    if
+            dtto is null then
+      dateto := trunc(sysdate); --to_date('2070/01/01','yyyy/mm/dd');
+            else
+      dateto := dtto;
+            end if;
+
+    --Get cookie id to send
+    cookie_id
+            := f_getcookie;
+
+    init_bal
+            := f_get_accounting_xy(claccid, dtfrom - 1);
+    df_print_stat.p_print_xy_clacc
+            (claccid, dtfrom, dtto, 2, cookie_id);
+
+            BEGIN
+
+            SELECT clnt_id,
+                   'C',
+                   i_cmp_id,
+                   s_cmp_snm,
+                   s_cmp_nm,
+                   s_trcode_desc,
+                   s_vat_nr,
+                   i_clnt_id,
+                   s_addr,
+                   s_zip_cd,
+                   s_city,
+                   s_area,
+                   s_office_tel,
+                   i_contr_id,
+                   c_bustype_cd,
+                   c_agrmtype_cd,
+                   c_confdntype_cd,
+                   i_acc_id,
+                   c_paymnt_tp,
+                   i_curr_id,
+                   s_acc_nbr,
+                   s_curr_cd,
+                   clacc_fl,
+                   contract_fl,
+                   client_fl,
+                   d_last_capital_dt,
+                   d_next_capital_dt,
+                   b_isactive,
+                   d_status_final_odu,
+                   d_status_liability,
+                   s_crs_id,
+                   d_fundlimit_end_dt,
+                   d_end_dt,
+                   clacc_cat,
+                   i_basel_cat_tp,
+                   i_group_id,
+                   country_iso,
+                   s_nace_code,
+                   bankbranch,
+                   d_start_acc_dt,
+                   d_stop_interest,
+                   d_redeem_dt,
+                   cookie_id,
+                   SYSDATE,
+                   username,
+                   NULL,
+                   NULL,
+                   (select adm_products.s_visual_name
+                    from adm_products
+                    where v_clacc.s_product_subtype = adm_products.productcode
+                      and rownum < 2) as s_product_visual
+            INTO header
+            FROM v_clacc
+            WHERE v_clacc.i_clnt_id = clnt_id
+              AND v_clacc.i_acc_id = claccid
+              AND d_end_dt IS NULL;
+
+            EXCEPTION WHEN NO_DATA_FOUND THEN
+
+            NULL; -- IGNORE THE ERROR
+
+            END;
+
+            WITH helper_table AS (
+                SELECT v_clacc.s_cmp_snm,
+                       v_clacc.s_vat_nr,
+                       substr(v_clacc.s_addr, 0, 200)              s_addr,
+                       nvl(substr(v_clacc.s_zip_cd, 0, 20), ' ')   s_zip_cd,
+                       v_clacc.c_bustype_cd                     AS c_bustype_cd,
+                       v_clacc.c_agrmtype_cd                    AS c_agrmtype_cd,
+                       v_clacc.c_confdntype_cd                  AS c_confdntype_cd,
+                       (
+                           SELECT adm_currency.s_curr_cd
+                           FROM adm_currency
+                           WHERE adm_currency.i_curr_id = v_clacc.i_curr_id
+                       )                                        AS i_curr_id,
+                       nvl(substr(v_clacc.s_city, 0, 20), ' ')     s_city,
+                       sys_xy_print.i_acc_id,
+                       sys_xy_print.doctext                        docttext,
+                       sys_xy_print.post_dt                        post_dt,
+                       sys_xy_print.valeur_dt                      valeur_dt,
+                       sys_xy_print.n_amnt,
+                       sys_xy_print.n_amnt_vat                     n_amnt_vat,
+                       v_clacc.i_clnt_id                           i_clnt_id,
+                       sys_xy_print.initbal                        n_debitbalance_amnt,
+                       dtto                                     AS date_to,     -- dtto,   --eod_proxima
+                       greatest(dtfrom, v_clacc.D_START_ACC_DT) AS date_from,   --    dtfrom,  --eod_proxima - (history_days)
+                       v_clacc.s_acc_nbr,
+                       '20.49.'
+                           || substr(v_clacc.s_acc_nbr, 1, 1)
+                           || substr(v_clacc.s_acc_nbr, 3, 1)
+                           || '.'
+                           || substr(v_clacc.s_acc_nbr, 4, 4)      gl_no,
+                       NULL                                     AS sortdt,
+                       sys_xy_print.offset                         offsetadded, --0,
+                       --       init_bal + nvl(sum( sys_xy_print.n_amnt + nvl(sys_xy_print.n_amnt_vat , 0))
+                       --                 over (order by sys_xy_print.cookie_id, sys_xy_print.i_clnt_id, sys_xy_print.i_acc_id , sys_xy_print.valeur_dt , sys_xy_print.POST_DT, rownum  ),0) as PY,  --, rownum
+                       sys_xy_print.cookie_id                   AS xy_cookie_id,
+                       SYSDATE,
+                       username,
+                       dtfrom
+                FROM sys_xy_print,
+                     v_clacc
+                WHERE v_clacc.i_acc_id = sys_xy_print.i_acc_id
+                  AND sys_xy_print.i_acc_id = claccid
+                  AND sys_xy_print.cookie_id = cookie_id
+                  AND v_clacc.d_end_dt IS NULL
+                  AND sys_xy_print.doctext <> 'AXY' --APO METAFORA PROHGOUMENOY- DEN TO XREIAZOMAZTE 18.09.2017
+            )
+            SELECT s_cmp_snm,
+                   s_vat_nr,
+                   s_addr,
+                   s_zip_cd,
+                   c_bustype_cd,
+                   c_agrmtype_cd,
+                   c_confdntype_cd,
+                   i_curr_id,
+                   s_city,
+                   i_acc_id,
+                   docttext,
+                   post_dt,
+                   valeur_dt,
+                   n_amnt,
+                   n_amnt_vat,
+                   i_clnt_id,
+                   n_debitbalance_amnt,
+                   date_to,
+                   date_from,
+                   s_acc_nbr,
+                   gl_no,
+                   sortdt,
+                   offsetadded,
+                   init_bal + nvl(SUM(helper_table.n_amnt + nvl(helper_table.n_amnt_vat, 0)) OVER(
+            ORDER BY
+                helper_table.xy_cookie_id, helper_table.i_clnt_id, helper_table.i_acc_id, helper_table.valeur_dt, helper_table.post_dt
+                , ROWNUM
+            ), 0) AS         py, --, rownum
+                   xy_cookie_id,
+                   SYSDATE,
+                   username,
+                   date_from dtfrom
+                BULK COLLECT
+            INTO datalist
+            FROM helper_table
+            WHERE xy_cookie_id = cookie_id;
+
+            DELETE
+            FROM sys_xy_print
+            WHERE sys_xy_print.cookie_id = cookie_id;
+
+            end;
+
+  procedure getjcaccountdbtr(dbtrid    in number,
+                             clidebid  in number,
+                             dtfrom    in date,
+                             dtto      in date,
+                             username  in varchar2,
+                             cookie_id out number,
+                             datalist  in out df_stg_types.trecjcaccount,
+                             header    in out df_stg_types.recclideb)
+            is
+    datefrom     date;
+    dateto
+            date;
+    init_bal
+            number;
+    history_days
+            int;
+            begin
+
+    -- DATES ++
+    --Get History limit
+            select n_param_val_nbr
+            into history_days
+            from adm_param
+            where s_param_cd = 'SYS_WEB_HISTORY_DAYS';
+
+            if
+            dtfrom is null then
+      datefrom := trunc(sysdate) - history_days;
+    elsif
+            dtfrom < trunc(sysdate) - history_days then
+      datefrom := trunc(sysdate) - history_days;
+            else
+      datefrom := trunc(dtfrom);
+            end if;
+
+    if
+            dtto is null then
+      dateto := trunc(sysdate); --to_date('2070/01/01','yyyy/mm/dd');  --trunc(sysdate);
+            else
+      dateto := dtto;
+            end if;
+
+    --Get cookie id to send
+    cookie_id
+            := f_getcookie;
+
+            SELECT nvl((
+                           SELECT nvl(csh.n_debitbalance_amnt, 0) AS debitbalance_amnt
+                           FROM clideb_inter_state_hist csh
+                           WHERE csh.i_clideb_id = clidebid
+                             AND csh.d_timestamp = trunc(dtfrom - 1)
+                       ), 0)
+            INTO init_bal
+            FROM dual;
+
+            df_stat_clideb
+            .
+            p_print_xy_clideb
+            (clidebid, dtfrom, dtto, 2, cookie_id);
+
+            BEGIN
+
+            SELECT i_clideb_id,
+                   clideb_acc_i_curr_id,
+                   i_afc_origin_clnt_id,
+                   i_afc_origin_dbtr_id,
+                   b_hasannouncement,
+                   b_announcementrequired,
+                   n_fundlimit_amnt,
+                   d_fundlimit_expired_dt,
+                   n_insurancelimit_amnt,
+                   d_insurancelimit_expired_dt,
+                   n_creditlimit_amnt,
+                   d_creditlimit_expired_dt,
+                   i_expctd_debt_turn_perd,
+                   i_old_limit_perd,
+                   n_prepayment_future_prnt,
+                   n_prepayment_normal_prnt,
+                   n_prepayment_unmatured_prnt,
+                   n_insurancerate_prnt,
+                   n_creditrate_prnt,
+                   b_straight_charges,
+                   c_variance_applied_to,
+                   c_freeze_fundinglimit,
+                   i_clnt_id,
+                   client_cmp_snm,
+                   i_dbtr_id,
+                   debtor_cmp_snm,
+                   debtor_cmp_nm,
+                   i_acc_id,
+                   clacc_c_paymnt_tp,
+                   clacc_i_curr_id,
+                   clacc_b_istwoway,
+                   clacc_s_acc_nbr,
+                   clacc_d_start_dt,
+                   clacc_d_end_dt,
+                   i_contr_id,
+                   clcontract_c_bustype_cd,
+                   clcontract_c_agrmtype_cd,
+                   clcontract_c_confdntype_cd,
+                   clcontract_s_contr_nbr,
+                   clcontract_d_start_dt,
+                   clcontract_d_end_dt,
+                   clacc_cat,
+                   i_cmp_id,
+                   i_basel_cat_tp,
+                   d_status_final_odu,
+                   d_status_liability,
+                   i_group_id,
+                   country_iso,
+                   region,
+                   s_nace_code,
+                   externalsprating,
+                   externalspratingdate,
+                   externalmoodysrating,
+                   externalmoodysratingdate,
+                   externalfitchrating,
+                   externalfitchratingdate,
+                   s_legal_form,
+                   totalsalescurrency,
+                   groupsalescurrency,
+                   totalassetscurrency,
+                   totalsales,
+                   totalsalesdate,
+                   groupsales,
+                   groupsalesdate,
+                   totalassets,
+                   debtor_vat,
+                   s_curr_cd,
+                   d_start_acc_dt,
+                   d_start_contract_dt,
+                   bankbranch,
+                   d_redeem_dt,
+                   cookie_id,
+                   SYSDATE,
+                   username,
+                   (select adm_products.s_visual_name
+                    from adm_products,
+                         clacc
+                    where clacc.i_acc_id = v_clideb_acc.i_acc_id
+                      and clacc.s_product_subtype = adm_products.productcode
+                      and rownum < 2) as s_product_visual,
+                   i_global_dbtr_id,
+                   i_global_clnt_id
+            INTO header
+            FROM v_clideb_acc
+            WHERE v_clideb_acc.i_clideb_id = clidebid
+              AND v_clideb_acc.i_dbtr_id = dbtrid
+              AND clacc_d_end_dt IS NULL;
+
+            EXCEPTION WHEN NO_DATA_FOUND THEN
+
+            NULL; -- IGNORE THE ERROR
+
+            END;
+
+            WITH helper_table AS (
+                SELECT v_clideb_acc.debtor_cmp_snm             AS        s_cmp_snm,
+                       v_clideb_acc.debtor_vat                 AS        s_vat_nr,
+                       substr((
+                                  SELECT company_address.s_addr
+                                  FROM company_address
+                                  WHERE company_address.i_cmp_id = v_clideb_acc.i_cmp_id
+                                    AND ROWNUM = 1
+                              ), 0, 200)                       AS        s_addr,
+                       nvl(substr((
+                                      SELECT company_address.s_zip_cd
+                                      FROM company_address
+                                      WHERE company_address.i_cmp_id = v_clideb_acc.i_cmp_id
+                                        AND ROWNUM = 1
+                                  ), 0, 20), ' ')              AS        s_zip_cd,
+                       v_clideb_acc.clcontract_c_bustype_cd    AS        c_bustype_cd,
+                       v_clideb_acc.clcontract_c_agrmtype_cd   AS        c_agrmtype_cd,
+                       v_clideb_acc.clcontract_c_confdntype_cd AS        c_confdntype_cd,
+                       (
+                           SELECT adm_currency.s_curr_cd
+                           FROM adm_currency
+                           WHERE adm_currency.i_curr_id = v_clideb_acc.clideb_acc_i_curr_id
+                       )                                       AS        i_curr_id,
+                       nvl(substr((
+                                      SELECT company_address.s_city
+                                      FROM company_address
+                                      WHERE company_address.i_cmp_id = v_clideb_acc.i_cmp_id
+                                        AND ROWNUM = 1
+                                  ), 0, 200), ' ')             AS        s_city,
+                       sys_xy_print.i_acc_id,
+                       sys_xy_print.doctext                              docttext,
+                       sys_xy_print.post_dt                              post_dt,
+                       sys_xy_print.valeur_dt                            valeur_dt,
+                       sys_xy_print.n_amnt,
+                       sys_xy_print.n_amnt_vat                           n_amnt_vat,
+                       v_clideb_acc.i_dbtr_id                            i_dbtr_id,
+                       sys_xy_print.initbal                              n_debitbalance_amnt,
+                       dtto                                    AS        date_to,     -- dtto,   --eod_proxima
+                       dtfrom                                  AS        date_from,   --    dtfrom,  --eod_proxima - (history_days)
+                       v_clideb_acc.clacc_s_acc_nbr            AS        s_acc_nbr,
+                       '20.49.'
+                           || substr(v_clideb_acc.clacc_s_acc_nbr, 1, 1)
+                           || substr(v_clideb_acc.clacc_s_acc_nbr, 3, 1)
+                           || '.'
+                           || substr(v_clideb_acc.clacc_s_acc_nbr, 4, 4) gl_no,
+                       NULL                                    AS        sortdt,
+                       sys_xy_print.offset                               offsetadded, --0,
+                       --       init_bal + nvl(sum( sys_xy_print.n_amnt + nvl(sys_xy_print.n_amnt_vat , 0))
+                       --                 over (order by sys_xy_print.cookie_id, sys_xy_print.i_clnt_id, sys_xy_print.i_acc_id , sys_xy_print.valeur_dt , sys_xy_print.POST_DT, rownum  ),0) as PY,  --, rownum
+                       sys_xy_print.cookie_id                  AS        xy_cookie_id,
+                       SYSDATE,
+                       username,
+                       dtfrom
+                FROM sys_xy_print,
+                     v_clideb_acc
+                WHERE v_clideb_acc.i_clideb_id = sys_xy_print.i_acc_id
+                  AND sys_xy_print.i_acc_id = clidebid
+                  AND sys_xy_print.cookie_id = cookie_id
+                  AND v_clideb_acc.clacc_d_end_dt IS NULL
+                  AND sys_xy_print.doctext <> 'AXY' --APO METAFORA PROHGOUMENOY- DEN TO XREIAZOMAZTE 18.09.2017
+            )
+            SELECT s_cmp_snm,
+                   s_vat_nr,
+                   s_addr,
+                   s_zip_cd,
+                   c_bustype_cd,
+                   c_agrmtype_cd,
+                   c_confdntype_cd,
+                   i_curr_id,
+                   s_city,
+                   i_acc_id,
+                   docttext,
+                   post_dt,
+                   valeur_dt,
+                   n_amnt,
+                   n_amnt_vat,
+                   i_dbtr_id,
+                   n_debitbalance_amnt,
+                   date_to,
+                   date_from,
+                   s_acc_nbr,
+                   gl_no,
+                   sortdt,
+                   offsetadded,
+                   init_bal + nvl(SUM(helper_table.n_amnt + nvl(helper_table.n_amnt_vat, 0)) OVER(
+            ORDER BY
+                helper_table.xy_cookie_id, helper_table.i_dbtr_id, helper_table.i_acc_id, helper_table.valeur_dt, helper_table.post_dt
+                , ROWNUM
+            ), 0) AS py, --, rownum
+                   xy_cookie_id,
+                   SYSDATE,
+                   username,
+                   dtfrom
+                     BULK COLLECT
+            INTO datalist
+            FROM helper_table
+            WHERE xy_cookie_id = cookie_id;
+
+            DELETE
+            FROM sys_xy_print
+            WHERE sys_xy_print.cookie_id = cookie_id;
+
+            end;
+
+  function
+            get_prev_working_days(p_days in number,
+                                 p_dt   in date) return date is
+            begin
+            return df_tesla_util.prev_working_days(p_days, p_dt);
+            end;
+
+  procedure getsequence(clntid   in number,
+                        seq_name in varchar2,
+                        username in varchar2,
+                        ret_seq  out number)
+            is
+            begin
+    if
+            seq_name = 'LOAD_REC' then
+      ret_seq := load_rec_seq.nextval;
+    elsif
+            seq_name = 'AGREEMENT_BFILE' then
+      ret_seq := agreement_blob_seq.nextval;
+    elsif
+            seq_name = 'COOKIE' then
+      ret_seq := sys_xy_print_seq.nextval;
+
+      --** SCF-12 I.R. 10/01/2020 START
+    elsif
+            seq_name = 'ALLOC' then
+      ret_seq := x_irs_alloc_seq.nextval;
+      --** SCF-12 I.R. 10/01/2020 END
+    elsif
+            seq_name = 'RPTD_DEF_SEQ' then
+      ret_seq := RPTD_DEF_SEQ.nextval;
+    elsif
+            seq_name = 'RPTD_INST_SEQ' then
+      ret_seq := RPTD_INST_SEQ.nextval;
+            else
+      ret_seq := load_rec_seq.nextval;
+            end if;
+            end;
+
+  procedure getuploadedfiles(auth_id   in number,
+                             authtype  in varchar2,
+                             username  in varchar2,
+                             cookie_id out number,
+                             datalist  out df_stg_types.trecuploadfiles)
+            is
+            begin
+
+    --Get cookie id to send
+    cookie_id
+            := f_getcookie;
+            select re.i_blob_id,
+                   auth_id,
+                   re.i_ref_id,
+                   authtype,
+                   re.s_blob_title,
+                   ag.l_blob,
+                   ag.i_blob_size,
+                   ag.s_blob_exten,
+                   ag.s_blob_content_tp,
+                   ag.i_per_id,
+                   ag.d_timestamp,
+                   null,
+                   null,
+                   re.s_blob_char,
+                   re.s_level,
+                   NULL --** I.R. ENBDSP-234 12/02/2020 IN PLACE OF I_DOC_ID
+                       bulk collect
+            into datalist
+            from relations_blob_det re,
+                 agreement_blob ag
+            where re.i_blob_id = ag.i_blob_id
+              and re.i_ref_id = auth_id;
+--re.i_blob_id = 55; -- ayto mono gia test
+
+            end;
+
+  procedure gw_getglinvoicesbd(clntid         in number,
+                               invno          in varchar2,
+                               categ          in varchar2, --** I.R. PIR-51 19/02/2019
+                               issuedt        in date,
+                               username       in varchar2,
+                               cookie_id      out number,
+                               glinvoicesbody in out df_stg_types.recglinvoicesbody)
+            is
+    type reftyp is ref cursor;
+    datadefs
+            reftyp;
+    sqlstr
+            varchar2(1000);
+    cnt
+            number(3); --** I.R. PIR-51 19/02/2019
+
+            begin
+
+    --Get cookie id to send
+    cookie_id
+            := f_getcookie;
+
+    --** I.R. 19/02/2019 PIR-51 START
+
+            select count(*)
+            into cnt
+            from gl_invoices_body bd,
+                 gl_invoices inv
+            where bd.s_inv_no = inv.s_inv_no
+              and trunc(bd.d_issue_dt) = trunc(inv.d_issue_dt)
+              and inv.i_clnt_id = clntid
+              and inv.s_inv_no = invno
+              and trim(bd.c_categ) = categ
+              and inv.d_issue_dt = issuedt;
+
+            if
+            cnt = 0 then
+
+      --** I.R. 19/02/2019 PIR-51 END
+
+      insert into tesla_glinvoicesbody_t
+        (select bd.s_inv_no, bd.d_issue_dt, bd.c_categ, bd.b_inv_body, bd.i_length, cookie_id, sysdate, username
+           from gl_invoices_body bd, gl_invoices inv
+          where bd.s_inv_no = inv.s_inv_no
+            and trunc(bd.d_issue_dt) = trunc(inv.d_issue_dt) -- 2017/11/02 changed
+            and inv.i_clnt_id = clntid
+            and inv.s_inv_no = invno
+            and inv.d_issue_dt = issuedt);
+
+      --** I.R. 19/02/2019 PIR-51 START
+
+            else
+
+      insert into tesla_glinvoicesbody_t
+        (select bd.s_inv_no, bd.d_issue_dt, bd.c_categ, bd.b_inv_body, bd.i_length, cookie_id, sysdate, username
+           from gl_invoices_body bd, gl_invoices inv
+          where bd.s_inv_no = inv.s_inv_no
+            and trunc(bd.d_issue_dt) = trunc(inv.d_issue_dt) -- 2017/11/02 changed
+            and inv.i_clnt_id = clntid
+            and inv.s_inv_no = invno
+            and trim(bd.c_categ) = categ --** I.R. PIR-51 19/02/2019
+            and inv.d_issue_dt = issuedt);
+
+            end if;
+
+    --** I.R. 19/02/2019 PIR-51 END
+
+    sqlstr
+            := ' SELECT   *
+      FROM     TESLA_GLINVOICESBODY_T
+      WHERE    cookie_id = ' || cookie_id;
+            open datadefs for sqlstr;
+
+            fetch datadefs
+                into glinvoicesbody;
+            close datadefs;
+            end;
+
+  procedure gw_getglinvoicesbddbtr(dbtrid         in number,
+                                   invno          in varchar2,
+                                   categ          in varchar2, --** I.R. PIR-51 19/02/2019
+                                   issuedt        in date,
+                                   username       in varchar2,
+                                   cookie_id      out number,
+                                   glinvoicesbody in out df_stg_types.recglinvoicesbody)
+            is
+        TYPE reftyp IS REF CURSOR;
+        datadefs
+            reftyp;
+        sqlstr
+            VARCHAR2(1000);
+        cnt
+            NUMBER(3);
+            begin
+
+    cookie_id
+            := f_getcookie;
+
+            SELECT COUNT(*)
+            INTO CNT
+            FROM gl_invoices_body bd,
+                 gl_invoices inv,
+                 v_clideb b
+            WHERE bd.s_inv_no = inv.s_inv_no
+              AND trunc(bd.d_issue_dt) = trunc(inv.d_issue_dt)
+              AND inv.s_inv_no = invno
+              AND inv.d_issue_dt = issuedt
+              AND inv.i_clideb_id = b.i_clideb_id
+              AND inv.i_clnt_id = b.i_clnt_id
+              AND b.i_dbtr_id = dbtrid
+              and trim(bd.c_categ) = categ
+              AND b.clcontract_c_confdntype_cd = 'N';
+
+            IF
+            CNT = 0 THEN
+
+            INSERT INTO tesla_glinvoicesbody_t
+                ( SELECT
+                    bd.s_inv_no,
+                    bd.d_issue_dt,
+                    bd.c_categ,
+                    bd.b_inv_body,
+                    bd.i_length,
+                    cookie_id,
+                    SYSDATE,
+                    username
+                FROM
+                    gl_invoices_body bd,
+                    gl_invoices inv,
+                    v_clideb b
+                WHERE
+                    bd.s_inv_no = inv.s_inv_no
+                    AND trunc(bd.d_issue_dt) = trunc(inv.d_issue_dt)
+                    AND inv.s_inv_no = invno
+                    AND inv.d_issue_dt = issuedt
+                    AND inv.i_clideb_id = b.i_clideb_id
+                    AND inv.i_clnt_id = b.i_clnt_id
+                    AND b.i_dbtr_id = dbtrid
+                    AND b.clcontract_c_confdntype_cd = 'N'
+                );
+
+            ELSE
+
+            INSERT INTO tesla_glinvoicesbody_t
+                ( SELECT
+                    bd.s_inv_no,
+                    bd.d_issue_dt,
+                    bd.c_categ,
+                    bd.b_inv_body,
+                    bd.i_length,
+                    cookie_id,
+                    SYSDATE,
+                    username
+                FROM
+                    gl_invoices_body bd,
+                    gl_invoices inv,
+                    v_clideb b
+                WHERE
+                    bd.s_inv_no = inv.s_inv_no
+                    AND trunc(bd.d_issue_dt) = trunc(inv.d_issue_dt)
+                    AND inv.s_inv_no = invno
+                    AND inv.d_issue_dt = issuedt
+                    AND inv.i_clideb_id = b.i_clideb_id
+                    AND inv.i_clnt_id = b.i_clnt_id
+                    AND b.i_dbtr_id = dbtrid
+                    and trim(bd.c_categ) = categ
+                    AND b.clcontract_c_confdntype_cd = 'N'
+                );
+
+            END IF;
+
+        sqlstr
+            := ' SELECT   *
+      FROM     TESLA_GLINVOICESBODY_T
+      WHERE    cookie_id = ' || cookie_id;
+            OPEN datadefs FOR sqlstr;
+
+            FETCH datadefs INTO glinvoicesbody;
+            CLOSE datadefs;
+            end;
+
+  procedure limitofdates(histdays number,
+                         dtfrom_p in out date,
+                         dtto_p   in out date)
+            is
+    datefrom date;
+    dateto
+            date;
+            begin
+    if
+            dtfrom_p is null then
+      datefrom := trunc(sysdate) - histdays;
+    elsif
+            dtfrom_p < trunc(sysdate) - histdays then
+      datefrom := trunc(sysdate) - histdays;
+            else
+      datefrom := trunc(dtfrom_p);
+            end if;
+
+    if
+            dtto_p is null then
+      dateto := to_date('2070/01/01', 'yyyy/mm/dd'); --trunc(sysdate);
+            else
+      dateto := dtto_p;
+            end if;
+
+    dtfrom_p
+            := datefrom;
+    dtto_p
+            := dateto;
+            end;
+
+  procedure logme(p_unit    varchar2,
+                  p_module  varchar2,
+                  p_message varchar2)
+            is
+    pragma autonomous_transaction;
+            begin
+            insert into x_gobi_log (i_log_id, s_unit, s_module, s_message, d_timestamp)
+            values (x_gobi_log_seq.nextval, p_unit, p_module, p_message, sysdate);
+
+            commit;
+            end;
+
+  procedure sendextmailtotesla(senderid    in number,
+                               receiverid  in number,
+                               mailsubject in varchar2,
+                               mailbody    in varchar2,
+                               username    in varchar2,
+                               --   cookie_id          IN OUT    NUMBER,
+                               msgret out varchar2)
+            is
+
+    --      l_date Date;
+    --      m_text VARCHAR2(32767);
+    --      m_clob CLOB;
+    m_id number;
+            begin
+    m_id
+            := mail_seq.nextval;
+    -- l_date := sysdate;
+    logme
+            ('DF_PROXY', 'sendExtMailToTesla', '1-m_id : ' || m_id || ', userName : ' || username);
+    df_bridge_prx_to_tsl.b_sendextmailtotesla
+            (m_id, senderid, receiverid, mailsubject, mailbody, username, msgret);
+
+    /*
+    --PRIORITY:     1-4 Critical-High-Medium-Low
+    --SUBCATEGORY:  '1', 'General', '2', 'Invoices', '3', 'Payments', '4', 'Receivables'
+        insert into mail_ext(i_mail_id, i_sender_id, s_subject, s_body, d_send_dt,
+                             i_priority_id, i_sub_category_id,
+                             i_per_id, d_timestamp)
+             values (m_id, senderId, mailSubject, null,  --to_clob( mailBody),
+                      l_date,3,3,
+                       -1, sysdate );
+
+       m_text := mailBody;
+       dbms_lob.createtemporary(m_clob, FALSE);
+       dbms_lob.writeappend(m_clob, LENGTH(m_text), m_text);
+
+
+       UPDATE mail_ext SET S_BODY = m_clob WHERE I_MAIL_ID = m_id;
+       dbms_lob.freetemporary(m_clob);
+
+        --1 insert for every receiver
+       -- B_ISREAD = 0 - is not read
+       -- D_READ_DT = null - is not read
+
+           insert into mail_receiver_ext (I_MAIL_ID, I_RECEIVER_ID, B_ISREAD,
+                                       D_READ_DT, D_DELETE_DT, I_PER_ID, D_TIMESTAMP)
+                      values (m_id, receiverId, 0, null, null, -1, sysdate);*/
+
+    logme
+            ('DF_PROXY', 'sendExtMailToTesla', '2-m_id : ' || m_id || ', msgRet : ' || msgret);
+    if
+            msgret <> 'OK' then
+      msgret := 'ERROR';
+--      rollback;  -- 24.06.2021 ORA-02064 distributed operation not supported"
+      return;
+            else
+      msgret := 'OK';
+            end if;
+
+--    commit;  -- 24.06.2021 ORA-02064 distributed operation not supported"
+            exception
+    when others then
+      logme('DF_PROXY', 'sendExtMailToTesla', 'ERROR : ' || sqlerrm);
+--      rollback;  -- 24.06.2021 ORA-02064 distributed operation not supported"
+      msgret
+            := 'ERROR';
+            end;
+
+  procedure sendextmailtoteslafortriggers(senderid    in number,
+                                          receiverid  in number,
+                                          mailsubject in varchar2,
+                                          mailbody    in varchar2,
+                                          username    in varchar2,
+                                          --   cookie_id          IN OUT    NUMBER,
+                                          msgret out varchar2)
+            is
+    pragma autonomous_transaction;
+
+    --      l_date Date;
+    --      m_text VARCHAR2(32767);
+    --      m_clob CLOB;
+    m_id
+            number;
+            begin
+    m_id
+            := mail_seq.nextval;
+    -- l_date := sysdate;
+    logme
+            ('DF_PROXY', 'sendextmailtoteslafortriggers', '1-m_id : ' || m_id || ', userName : ' || username);
+    df_bridge_prx_to_tsl.b_sendextmailtotesla
+            (m_id, senderid, receiverid, mailsubject, mailbody, username, msgret);
+
+    /*
+    --PRIORITY:     1-4 Critical-High-Medium-Low
+    --SUBCATEGORY:  '1', 'General', '2', 'Invoices', '3', 'Payments', '4', 'Receivables'
+        insert into mail_ext(i_mail_id, i_sender_id, s_subject, s_body, d_send_dt,
+                             i_priority_id, i_sub_category_id,
+                             i_per_id, d_timestamp)
+             values (m_id, senderId, mailSubject, null,  --to_clob( mailBody),
+                      l_date,3,3,
+                       -1, sysdate );
+
+       m_text := mailBody;
+       dbms_lob.createtemporary(m_clob, FALSE);
+       dbms_lob.writeappend(m_clob, LENGTH(m_text), m_text);
+
+
+       UPDATE mail_ext SET S_BODY = m_clob WHERE I_MAIL_ID = m_id;
+       dbms_lob.freetemporary(m_clob);
+
+        --1 insert for every receiver
+       -- B_ISREAD = 0 - is not read
+       -- D_READ_DT = null - is not read
+
+           insert into mail_receiver_ext (I_MAIL_ID, I_RECEIVER_ID, B_ISREAD,
+                                       D_READ_DT, D_DELETE_DT, I_PER_ID, D_TIMESTAMP)
+                      values (m_id, receiverId, 0, null, null, -1, sysdate);*/
+
+    logme
+            ('DF_PROXY', 'sendextmailtoteslafortriggers', '2-m_id : ' || m_id || ', msgRet : ' || msgret);
+    if
+            msgret <> 'OK' then
+      msgret := 'ERROR';
+            rollback;
+            return;
+--raise_application_error (-20098, 'Message id : ' || to_char(m_id) || ', Sender Id : ' || to_char(senderid) || ', Receiver Id : ' || to_char(receiverid));
+            else
+      msgret := 'OK';
+            end if;
+
+            commit;
+            exception
+    when others then
+      logme('DF_PROXY', 'sendextmailtoteslafortriggers', 'ERROR : ' || sqlerrm);
+            rollback;
+            msgret
+            := 'ERROR';
+            end;
+
+  procedure sendintmailtoproxima(rprid       in number,
+                                 mailsubject in varchar2,
+                                 mailbody    in varchar2,
+                                 username    in varchar2,
+                                 cookie_id   in out number,
+                                 msgret      out varchar2)
+            is
+
+    l_date     date;
+    m_text
+            varchar2(32767);
+    m_clob
+            clob;
+    m_id
+            number;
+    roleid
+            number;
+    roleperson
+            df_util.persontype;
+            begin
+    m_id
+            := mail_seq.nextval;
+    l_date
+            := sysdate;
+
+    /*PRIORITY:     1-4 Critical-High-Medium-Low
+    SUBCATEGORY:  '1', 'General', '2', 'Invoices', '3', 'Payments', '4', 'Receivables'*/
+    --    logme ('PRX_PROXY','sendIntMailToproxima', 'Point 1 : ');
+            insert into mail_int
+            (i_mail_id, i_sender_id, s_subject, s_body, d_send_dt, i_priority_id, i_sub_category_id, i_per_id,
+             d_timestamp)
+            values (m_id,
+                    -1,
+                    mailsubject,
+                    null, --to_clob( mailBody),  -- pername me -1 kai fainetai oti einai apo system
+                    l_date,
+                    3,
+                    3,
+                    -1,
+                    sysdate);
+
+            m_text
+            := mailbody;
+    dbms_lob.createtemporary
+            (m_clob, false);
+    dbms_lob.writeappend
+            (m_clob, length(m_text), m_text);
+            update mail_int
+            set s_body = m_clob
+            where i_mail_id = m_id;
+
+            dbms_lob
+            .
+            freetemporary
+            (m_clob);
+    --bres pou 8a stalei: symfwna me kapoio rolo mazepse ta per ids kai bale loop gia insert
+
+    -- Member
+    roleid
+            := df_parm.f_get_sys_parm_num('TESLA.CHECK'); --(prod role id:402 for collection team)
+    roleperson
+            := df_util.f_get_persons_in_role(roleid); --get array of persons
+
+    -- logme ('PRX_PROXY','sendIntMailToproxima', 'Point 6 : ');
+            for j in 1 .. roleperson.count()
+    loop
+      insert into sys_msg
+        (i_msg_id, s_msg_tp, i_per_to_id, i_per_from_id, s_msg, d_timestamp, i_ref_id)
+      values
+        (sys_msg_seq.nextval, 'MSG_TESLA', roleperson(j), -1, mailsubject, sysdate, rprid);
+
+      -- 1 insert for every receiver
+      -- B_ISREAD = 0 - is not read
+      -- D_READ_DT = null - is not read
+
+            insert into mail_receiver_int
+            (i_mail_id, i_receiver_id, b_isread, d_read_dt, d_delete_dt, i_per_id, d_timestamp)
+            values (m_id, roleperson(j), 0, null, null, -1, sysdate);
+
+            end loop;
+
+    msgret
+            := 'OK';
+            exception
+    when no_data_found then
+      msgret := 'ERROR';
+            end;
+
+  procedure setapprdemands(dbtrid    in number,
+                           demandid  in number,
+                           scomment  in varchar2,
+                           username  in varchar2,
+                           cookie_id in out number,
+                           msgret    out varchar2,
+                           daterec   in out df_stg_types.recapprdemands)
+            is
+
+        l_cnt                           NUMBER;
+        l_reqid
+            NUMBER;
+        l_date
+            DATE;
+        l_msg_mail
+            VARCHAR2(200);
+        l_rprid
+            NUMBER; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+        rprid
+            NUMBER;
+        lb_auto_finance
+            CHAR(1);
+        lb_auto_appr_receivable_conf
+            CHAR(1);
+        ln_max_auto_fin_validate_amnt
+            NUMBER;
+        ls_demappr_status
+            VARCHAR2(200);
+        batchid
+            NUMBER;
+            begin
+    rprid
+            := -1;
+    l_date
+            := SYSDATE;
+
+    --Put here rules to check or if has an older image
+    /* select count(*)
+    into l_cnt
+    from
+    WHERE
+    and (m.D_TIMESTAMP > l_date or c.D_TIMESTAMP > l_date );
+
+    if l_cnt > 0 then
+       msgRet := 'DIFF';
+       RETURN;
+    end if;*/
+    teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemands', 'appr-dem=' || to_char(demandid), cookie_id);
+
+            SELECT COUNT(*)
+            INTO l_cnt
+            FROM demand
+                     INNER JOIN clideb_acc ON (demand.i_clideb_id = clideb_acc.i_clideb_id)
+                     INNER JOIN adm_product_params ON (clideb_acc.productcode = adm_product_params.productcode)
+            WHERE adm_product_params.b_isdd = 'Y'
+              AND demand.i_demand_id = demandid;
+
+            teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemands', 'is-dd-cnt=' || to_char(l_cnt), cookie_id);
+    teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemands', 'actionType=' || daterec.S_ACTION_TYPE , cookie_id);
+
+    IF
+            l_cnt > 0 and daterec.S_ACTION_TYPE = 'APPROVE_DD' THEN
+        --DD
+        seteligiblefordddemands(dbtrid,demandid,scomment,username,cookie_id,msgret,daterec);
+        return;
+            end if;
+
+            SELECT claccfinreq_seq.NEXTVAL
+            INTO l_reqid
+            FROM dual;
+
+            logme
+            ('DF_TESLA_PROXY_DEV', 'setApprDemands', 'before update : ');
+        ls_demappr_status
+            := 'REQUESTED';
+
+            SELECT i_rpr_id
+            into l_rprid
+            FROM sec_tesla_login
+            where lower(s_username) = lower(username); --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+            daterec
+            .
+            i_rpr_id
+            := l_rprid; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+
+    -- Save the request
+            INSERT INTO demand_approval_request a (
+            i_req_id,
+            i_demand_id,
+            d_requested_dt,
+            s_demappr_status,
+            s_comment,
+            i_rpr_id, --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+            S_ACTION_TYPE
+        )
+            VALUES (
+                l_reqid,
+                demandid,
+                l_date,
+                ls_demappr_status,
+                scomment,
+                daterec.i_rpr_id, --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+                daterec.S_ACTION_TYPE
+                );
+
+--Check if EOD Job is running or has already run for sysdate
+
+            SELECT COUNT(*)
+            INTO l_cnt
+            FROM (
+                     SELECT job_name
+                     FROM all_scheduler_job_run_details
+                     WHERE job_name = 'P_EOD_ALL'
+                       AND trunc(actual_start_date) = trunc(SYSDATE)
+                     UNION ALL
+                     SELECT job_name
+                     FROM all_scheduler_running_jobs
+                     WHERE job_name = 'P_EOD_ALL'
+                 );
+
+            IF
+            l_cnt = 0 THEN
+
+       --Start of "Auto Approve Confirmation and Auto Finance Demand"  26/07/2018 A.D.
+            SELECT clideb_acc.b_auto_finance,
+                   adm_product_params.b_auto_appr_receivable_conf,
+                   clideb_acc.n_max_auto_fin_validate_amnt,
+                   demand.i_batch_id
+            INTO
+                lb_auto_finance,
+                lb_auto_appr_receivable_conf,
+                ln_max_auto_fin_validate_amnt,
+                batchid
+            FROM demand
+                     JOIN clideb_acc ON (clideb_acc.i_clideb_id = demand.i_clideb_id)
+                     JOIN clacc ON (clideb_acc.i_acc_id = clacc.i_acc_id)
+                     JOIN adm_product_params ON (adm_product_params.productcode = clacc.s_product_subtype)
+            WHERE demand.i_demand_id = demandid;
+
+            IF
+            lb_auto_appr_receivable_conf = 'Y' and daterec.S_ACTION_TYPE = 'APPROVE' THEN
+                df_tesla_transaction.approvedemand(l_reqid);
+                ls_demappr_status
+            := 'APPROVED';
+                df_dspr_eng.p_new_validation_dspr
+            (batchid, 'DEMAND',false);
+                IF
+            lb_auto_finance = 'Y' THEN
+                    df_tesla_transaction.financedemand(demandid, ln_max_auto_fin_validate_amnt,NULL,-1);
+            END IF;
+
+                IF
+            lb_auto_finance = 'N' THEN
+                        NOTIFICATION_API.NotificationProcess_ii('SI_FINANCE_REQUEST_AVAILABLE',
+                                        '<statementSpec><bindSet><transRefNum>' || demandid || '</transRefNum></bindSet></statementSpec>',
+                                        '<statementSpec><bindSet><doc_cd>SI_FINANCE_REQUEST_AVAILABLE</doc_cd></bindSet></statementSpec>'
+                                        );
+            END IF;
+            END IF;
+
+
+        --End of "Auto Approve Confirmation and Auto Finance Demand"  26/07/2018 A.D.
+
+            IF
+            lb_auto_appr_receivable_conf = 'Y' and daterec.S_ACTION_TYPE = 'REJECT' THEN
+                df_tesla_transaction.rejectdemand(l_reqid);
+                ls_demappr_status
+            := 'APPROVED';
+            END IF;
+
+            END IF;
+
+    --Return data to update Tesla
+
+        daterec.i_req_id
+            := l_reqid;
+        daterec.i_dbtr_id
+            := dbtrid;
+        daterec.i_demand_id
+            := demandid;
+        daterec.s_demappr_status
+            := ls_demappr_status;
+        daterec.d_requested_dt
+            := l_date;
+        daterec.s_comment
+            := scomment;
+        daterec.cookie_id
+            := cookie_id;
+        daterec.s_per_username
+            := username;
+
+    --  logme ('PRX_PROXY','call sendIntMail', 'ERROR : ' || SQLERRM);
+    logme
+            ('DF_TESLA_PROXY_DEV', 'setApprDemands', 'not sendIntMail ');
+--        df_proxy.sendintmailtoproxima(rprid, 'Request for Approval - Tesla', 'Debtor with id: '
+--                                                                             || dbtrid
+--                                                                             || ' and demand id: '
+--                                                                             || TO_CHAR(daterec.i_demand_id), username, cookie_id
+--                                                                             , l_msg_mail);
+
+        msgret
+            := 'OK';
+            exception
+    when others then
+      logme('DF_PROXY', 'setApprDemands', 'ERROR : ' || sqlerrm);
+      msgret
+            := 'ERROR';
+            end;
+
+  procedure setapprdemandsbulk(loadid    in number,
+                               msgret    out varchar2)
+            is
+
+        l_cnt                           NUMBER;
+        l_reqid
+            NUMBER;
+        l_date
+            DATE;
+        l_msg_mail
+            VARCHAR2(200);
+        l_rprid
+            NUMBER; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+        rprid
+            NUMBER;
+        lb_auto_finance
+            CHAR(1);
+        lb_auto_appr_receivable_conf
+            CHAR(1);
+        ln_max_auto_fin_validate_amnt
+            NUMBER;
+        ls_demappr_status
+            VARCHAR2(200);
+        batchid
+            NUMBER;
+        p_clideb
+            NUMBER;
+        demandCount
+            NUMBER;
+        ls_comment
+            VARCHAR2(200);
+        representative_nm
+            VARCHAR2(1000 char);
+        dbtr_cmp_nm
+            VARCHAR2(1000 char);
+
+            begin
+    rprid
+            := -1;
+    l_date
+            := SYSDATE;
+
+    teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemandsbulk', 'appr-dem=' || to_char(loadid), loadid);
+
+            FOR record IN (select * from sec_tesla_utility_table where i_load_id = loadid)
+    LOOP
+
+
+            SELECT COUNT(*)
+            INTO l_cnt
+            FROM demand
+                     INNER JOIN clideb_acc ON (demand.i_clideb_id = clideb_acc.i_clideb_id)
+                     INNER JOIN adm_product_params ON (clideb_acc.productcode = adm_product_params.productcode)
+            WHERE adm_product_params.b_isdd = 'Y'
+              AND demand.i_demand_id = record.i_req_id;
+
+            teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemandsbulk', 'is-dd-cnt=' || to_char(l_cnt), record.i_req_id);
+        teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemandsbulk', 'actionType=' || record.S_ACTION , record.i_req_id);
+
+--    IF l_cnt > 0 and record.S_ACTION = 'APPROVE_DD' THEN
+--        --DD
+--        seteligiblefordddemands(dbtrid,demandid,scomment,username,cookie_id,msgret,daterec);
+--        return;
+--    end if;
+
+            SELECT claccfinreq_seq.NEXTVAL
+            INTO l_reqid
+            FROM dual;
+
+            teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemandsbulk', 'before update :' || to_char(loadid), record.i_req_id);
+        ls_demappr_status
+            := 'REQUESTED';
+
+            SELECT i_rpr_id
+            into l_rprid
+            FROM sec_tesla_login
+            where lower(s_username) = lower(record.s_username);
+            --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+--        daterec.i_rpr_id := l_rprid; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+            SELECT s_comment
+            into ls_comment
+            FROM REP_APPROVAL_DEMANDS_FLOW
+            where i_demand_id = record.i_req_id;
+
+-- Save the request
+            INSERT INTO demand_approval_request a (
+            i_req_id,
+            i_demand_id,
+            d_requested_dt,
+            s_demappr_status,
+            s_comment,
+            i_rpr_id, --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+            S_ACTION_TYPE
+        )
+            VALUES (
+                l_reqid,
+                record.i_req_id,
+                l_date,
+                ls_demappr_status,
+                ls_comment,
+                l_rprid, --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+                record.S_ACTION
+                );
+
+
+--Check if EOD Job is running or has already run for sysdate
+
+            SELECT COUNT(*)
+            INTO l_cnt
+            FROM (
+                     SELECT job_name
+                     FROM all_scheduler_job_run_details
+                     WHERE job_name = 'P_EOD_ALL'
+                       AND trunc(actual_start_date) = trunc(SYSDATE)
+                     UNION ALL
+                     SELECT job_name
+                     FROM all_scheduler_running_jobs
+                     WHERE job_name = 'P_EOD_ALL'
+                 );
+
+            IF
+            l_cnt = 0 THEN
+
+       --Start of "Auto Approve Confirmation and Auto Finance Demand"  26/07/2018 A.D.
+            SELECT clideb_acc.b_auto_finance,
+                   adm_product_params.b_auto_appr_receivable_conf,
+                   clideb_acc.n_max_auto_fin_validate_amnt,
+                   demand.i_clideb_id
+            INTO
+                lb_auto_finance,
+                lb_auto_appr_receivable_conf,
+                ln_max_auto_fin_validate_amnt,
+                p_clideb
+            FROM demand
+                     JOIN clideb_acc ON (clideb_acc.i_clideb_id = demand.i_clideb_id)
+                     JOIN clacc ON (clideb_acc.i_acc_id = clacc.i_acc_id)
+                     JOIN adm_product_params ON (adm_product_params.productcode = clacc.s_product_subtype)
+            WHERE demand.i_demand_id = record.i_req_id;
+
+            IF
+            lb_auto_appr_receivable_conf = 'Y' and record.S_ACTION = 'APPROVE' THEN
+                df_tesla_transaction.approvedemand(l_reqid);
+                ls_demappr_status
+            := 'APPROVED';
+            update SEC_TESLA_UTILITY_TABLE
+            set s_msg = nvl(s_msg, '') || 'DISAPPR,'
+            where i_load_id = loadid
+              and i_req_id = record.i_req_id;
+--                df_dspr_eng.p_new_validation_dspr(batchid, 'DEMAND',false);
+            IF
+            lb_auto_finance = 'Y' THEN
+            update SEC_TESLA_UTILITY_TABLE
+            set s_msg = nvl(s_msg, '') || 'FIN,'
+            where i_load_id = loadid
+              and i_req_id = record.i_req_id;
+--                    df_tesla_transaction.financedemand(record.i_req_id, ln_max_auto_fin_validate_amnt,NULL,-1);
+            END IF;
+
+            SELECT count(*)
+            INTO demandCount
+            FROM DEMAND d
+            WHERE I_BATCH_ID IN (SELECT I_BATCH_ID FROM DEMAND d2 WHERE I_DEMAND_ID = record.i_req_id);
+
+            IF
+            lb_auto_finance = 'N' AND demandCount = 1 THEN
+                        NOTIFICATION_API.NotificationProcess_ii('SI_FINANCE_REQUEST_AVAILABLE',
+                                        '<statementSpec><bindSet><transRefNum>' || record.i_req_id || '</transRefNum></bindSet></statementSpec>',
+                                        '<statementSpec><bindSet><doc_cd>SI_FINANCE_REQUEST_AVAILABLE</doc_cd></bindSet></statementSpec>'
+                                        );
+            END IF;
+            END IF;
+
+
+        --End of "Auto Approve Confirmation and Auto Finance Demand"  26/07/2018 A.D.
+
+            IF
+            lb_auto_appr_receivable_conf = 'Y' and record.S_ACTION = 'REJECT' THEN
+                df_tesla_transaction.rejectdemand(l_reqid);
+                ls_demappr_status
+            := 'APPROVED';
+            END IF;
+
+            END IF;
+
+    --Return data to update Tesla
+--
+--        daterec.i_req_id := l_reqid;
+--        daterec.i_dbtr_id := dbtrid;
+--        daterec.i_demand_id := demandid;
+--        daterec.s_demappr_status := ls_demappr_status;
+--        daterec.d_requested_dt := l_date;
+--        daterec.s_comment := scomment;
+--        daterec.cookie_id := cookie_id;
+--        daterec.s_per_username := username;
+
+    --  logme ('PRX_PROXY','call sendIntMail', 'ERROR : ' || SQLERRM);
+        logme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemandsbulk', 'not sendIntMail ');
+--        df_proxy.sendintmailtoproxima(rprid, 'Request for Approval - Tesla', 'Debtor with id: '
+--                                                                             || dbtrid
+--                                                                             || ' and demand id: '
+--                                                                             || TO_CHAR(daterec.i_demand_id), username, cookie_id
+--                                                                             , l_msg_mail);
+
+            END LOOP;
+
+            FOR batch IN (
+    			SELECT	distinct
+                demand.I_BATCH_ID,
+				clideb_acc.b_auto_finance,
+                adm_product_params.b_auto_appr_receivable_conf,
+                SEC_TESLA_UTILITY_TABLE.S_ACTION
+            FROM
+                demand
+                JOIN clideb_acc ON ( clideb_acc.i_clideb_id = demand.i_clideb_id )
+                JOIN clacc ON ( clideb_acc.i_acc_id = clacc.i_acc_id )
+                JOIN adm_product_params ON ( adm_product_params.productcode = clacc.s_product_subtype )
+                JOIN SEC_TESLA_UTILITY_TABLE ON (demand.I_DEMAND_ID = SEC_TESLA_UTILITY_TABLE.i_req_id AND SEC_TESLA_UTILITY_TABLE.i_load_id = loadid)
+
+    )
+    LOOP
+
+	    IF batch.b_auto_appr_receivable_conf = 'Y' and batch.S_ACTION = 'APPROVE' THEN
+
+            SELECT count(*)
+            INTO demandCount
+            FROM DEMAND d
+            WHERE I_BATCH_ID = batch.I_BATCH_ID;
+
+            IF
+            batch.b_auto_finance = 'N' AND demandCount >= 1 THEN
+                    NOTIFICATION_API.NotificationProcess_ii('SI_FINANCE_REQUEST_BATCH_AVAILABLE',
+                                                '<statementSpec><bindSet><transRefNum>' || batch.I_BATCH_ID || '</transRefNum></bindSet></statementSpec>',
+                                                '<statementSpec><bindSet><doc_cd>SI_FINANCE_REQUEST_BATCH_AVAILABLE</doc_cd></bindSet></statementSpec>');
+            END IF;
+            END IF;
+
+            END LOOP;
+
+
+            FOR clidebs IN (select distinct I_SECONDARY_REQ_ID from SEC_TESLA_UTILITY_TABLE where i_load_id = loadid and s_msg like '%DISAPPR%')
+    LOOP
+         teslalogme('DF_TESLA_PROXY_DEV', 'setapprdemandsbulk', 'dspr' || clidebs.I_SECONDARY_REQ_ID, loadid);
+         df_dspr_eng.p_new_validation_dspr_wclideb
+            (clidebs.I_SECONDARY_REQ_ID, 'DEMAND',false);
+            END LOOP;
+
+
+            FOR demand_id IN (select I_REQ_ID from SEC_TESLA_UTILITY_TABLE where i_load_id = loadid and s_msg like '%FIN%')
+    LOOP
+            SELECT clideb_acc.n_max_auto_fin_validate_amnt
+            INTO
+                ln_max_auto_fin_validate_amnt
+            FROM demand
+                     JOIN clideb_acc ON (clideb_acc.i_clideb_id = demand.i_clideb_id)
+            WHERE demand.i_demand_id = demand_id.I_REQ_ID;
+
+            teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemandsbulk', 'df_tesla_transaction.financedemand ' || demand_id.I_REQ_ID, loadid);
+
+         df_tesla_transaction.financedemand
+            (demand_id.I_REQ_ID, ln_max_auto_fin_validate_amnt, NULL, -1);
+            END LOOP;
+
+            SELECT COUNT(*)
+            INTO l_cnt
+            FROM (
+                     select I_REQ_ID
+                     from SEC_TESLA_UTILITY_TABLE
+                     where i_load_id = loadid
+                         and s_msg not like '%FIN%'
+                        or s_msg is null
+                 );
+
+            IF
+            l_cnt > 0 THEN
+           NOTIFICATION_API.NotificationProcess_ii('SI_FINANCE_REQUEST_AVAILABLE_INTERNAL',
+                '<statementSpec><bindSet><rprid>' || l_rprid || '</rprid></bindSet></statementSpec>',
+                '<statementSpec><bindSet><doc_cd>SI_FINANCE_REQUEST_AVAILABLE_INTERNAL</doc_cd></bindSet></statementSpec>');
+            END IF;
+
+    teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setapprdemandsbulk', 'after dspr', loadid);
+
+    msgret
+            := 'OK';
+
+            update sec_tesla_utility_table
+            set s_error_msg = msgret
+            where i_load_id = loadid;
+
+            exception
+    when others then
+      teslalogme('DF_TESLA_PROXY_DEV', 'setapprdemandsbulk', 'ERROR : ' || sqlerrm, loadid);
+      msgret
+            := 'ERROR';
+            update sec_tesla_utility_table
+            set s_error_msg = msgret
+            where i_load_id = loadid;
+            end;
+
+  procedure seteligiblefordddemands (
+        dbtrid      IN          NUMBER,
+        demandid    IN          NUMBER,
+        scomment    IN          VARCHAR2,
+        username    IN          VARCHAR2,
+        cookie_id   IN OUT      NUMBER,
+        msgret      OUT         VARCHAR2,
+        daterec     IN OUT      df_stg_types.recapprdemands
+    )
+            IS
+
+        l_cnt                           NUMBER;
+        l_reqid
+            NUMBER;
+        l_date
+            DATE;
+        l_msg_mail
+            VARCHAR2(200);
+        l_rprid
+            NUMBER; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+        rprid
+            NUMBER;
+        lb_auto_finance
+            CHAR(1);
+        lb_auto_appr_receivable_conf
+            CHAR(1);
+        ln_max_auto_fin_validate_amnt
+            NUMBER;
+        ls_demappr_status
+            VARCHAR2(200);
+        batchid
+            NUMBER;
+            BEGIN
+        rprid
+            := -1;
+        l_date
+            := SYSDATE;
+
+            SELECT claccfinreq_seq.NEXTVAL
+            INTO l_reqid
+            FROM dual;
+
+            teslalogme
+            ('DF_TESLA_PROXY_DEV', 'seteligiblefordddemands', 'appr-dem=' || to_char(demandid), cookie_id);
+
+        ls_demappr_status
+            := 'REQUESTED';
+
+            SELECT i_rpr_id
+            into l_rprid
+            FROM sec_tesla_login
+            where lower(s_username) = lower(username); --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+            daterec
+            .
+            i_rpr_id
+            := l_rprid; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+
+    -- Save the request
+            INSERT INTO DEMAND_ELIGIBLE_FOR_DD_REQUEST a (
+            i_req_id,
+            i_demand_id,
+            d_requested_dt,
+            s_demappr_status,
+            s_comment,
+            i_rpr_id, --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+            S_ACTION_TYPE
+        )
+            VALUES (
+                l_reqid,
+                demandid,
+                l_date,
+                ls_demappr_status,
+                scomment,
+                daterec.i_rpr_id, --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+                daterec.S_ACTION_TYPE
+                );
+
+--Check if EOD Job is running or has already run for sysdate
+
+            SELECT COUNT(*)
+            INTO l_cnt
+            FROM (
+                     SELECT job_name
+                     FROM all_scheduler_job_run_details
+                     WHERE job_name = 'P_EOD_ALL'
+                       AND trunc(actual_start_date) = trunc(SYSDATE)
+                     UNION ALL
+                     SELECT job_name
+                     FROM all_scheduler_running_jobs
+                     WHERE job_name = 'P_EOD_ALL'
+                 );
+
+            IF
+            l_cnt = 0 THEN
+
+       --Start of "Auto Approve Confirmation and Auto Finance Demand"  26/07/2018 A.D.
+            SELECT clideb_acc.b_auto_finance,
+                   clideb_acc.n_max_auto_fin_validate_amnt,
+                   demand.i_batch_id
+            INTO
+                lb_auto_finance,
+                ln_max_auto_fin_validate_amnt,
+                batchid
+            FROM demand
+                     JOIN clideb_acc ON (clideb_acc.i_clideb_id = demand.i_clideb_id)
+                     JOIN clacc ON (clideb_acc.i_acc_id = clacc.i_acc_id)
+                     JOIN adm_product_params ON (adm_product_params.productcode = clacc.s_product_subtype)
+            WHERE demand.i_demand_id = demandid;
+
+            df_tesla_transaction
+            .
+            setdemandeligiblefordd
+            (l_reqid);
+            ls_demappr_status
+            := 'APPROVED';
+            df_dspr_eng.p_new_validation_dspr
+            (batchid, 'DEMAND',false);
+            IF
+            lb_auto_finance = 'Y' THEN
+                df_tesla_transaction.financedemand(demandid, ln_max_auto_fin_validate_amnt,NULL,-1);
+            END IF;
+
+            if
+            lb_auto_finance = 'N' then
+                NOTIFICATION_API.NotificationProcess_ii('SI_FINANCE_REQUEST_AVAILABLE',
+                                                '<statementSpec><bindSet><transRefNum>' || demandid || '</transRefNum></bindSet></statementSpec>',
+                                                '<statementSpec><bindSet><doc_cd>SI_FINANCE_REQUEST_AVAILABLE</doc_cd></bindSet></statementSpec>'
+                                                );
+            end if;
+        --End of "Auto Approve Confirmation and Auto Finance Demand"  26/07/2018 A.D.
+
+            END IF;
+
+    --Return data to update Tesla
+
+        daterec.i_req_id
+            := l_reqid;
+        daterec.i_dbtr_id
+            := dbtrid;
+        daterec.i_demand_id
+            := demandid;
+        daterec.s_demappr_status
+            := ls_demappr_status;
+        daterec.d_requested_dt
+            := l_date;
+        daterec.s_comment
+            := scomment;
+        daterec.cookie_id
+            := cookie_id;
+        daterec.s_per_username
+            := username;
+
+    --  logme ('PRX_PROXY','call sendIntMail', 'ERROR : ' || SQLERRM);
+--        df_proxy.sendintmailtoproxima(rprid, 'Request for Eligibility Approval - Tesla', 'Debtor with id: '
+--                                                                             || dbtrid
+--                                                                             || ' and demand id: '
+--                                                                             || TO_CHAR(daterec.i_demand_id), username, cookie_id
+--                                                                             , l_msg_mail);
+
+        msgret
+            := 'OK';
+            EXCEPTION
+        WHEN OTHERS THEN
+            logme('DF_TESLA_PROXY_DEV', 'seteligiblefordddemands', 'ERROR : ' || sqlerrm);
+            msgret
+            := 'ERROR';
+            END;
+
+  procedure setdisputedemands(dbtrid          in number,
+                              demandid        in number,
+                              requestedamount in number,
+                              scomment        in varchar2,
+                              code            in varchar2,
+                              username        in varchar2,
+                              cookie_id       in out number,
+                              msgret          out varchar2,
+                              daterec         in out df_stg_types.recdemanddispute)
+            is
+    l_cnt      number;
+    l_reqid
+            number;
+    l_date
+            date;
+    l_msg_mail
+            varchar2(200);
+    l_rprid
+            number; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+    rprid
+            number;
+            begin
+    rprid
+            := -1;
+    l_date
+            := sysdate;
+
+    --Put here rules to check or if has an older image
+    /* select count(*)
+    into l_cnt
+    from
+    WHERE
+    and (m.D_TIMESTAMP > l_date or c.D_TIMESTAMP > l_date );
+
+    if l_cnt > 0 then
+       msgRet := 'DIFF';
+       RETURN;
+    end if;*/
+            select claccfinreq_seq.nextval
+            into l_reqid
+            from dual;
+
+            logme
+            ('DF_PROXY', 'setApprDemands', 'before update : ');
+
+    --** I.R. ENBDSP-276 24/01/2020 START
+
+            update demand_dispute_request ddr
+            set ddr.s_demappr_status = 'CANCELLED'
+            where ddr.i_demand_id = demandid
+              and ddr.s_disappr_cd LIKE '15%'
+              --    and ddr.s_disappr_cd = code
+              and ddr.s_demappr_status = 'REQUESTED';
+
+--** I.R. ENBDSP-276 24/01/2020 END
+
+            SELECT i_rpr_id
+            into l_rprid
+            FROM sec_tesla_login
+            where lower(s_username) = lower(username); --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+            daterec
+            .
+            i_rpr_id
+            := l_rprid; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+
+    -- Save the request
+            insert into demand_dispute_request a (i_req_id,
+       i_demand_id,
+       n_requested_amount,
+       d_requested_dt,
+       s_demappr_status,
+       s_comment,
+       s_disappr_cd,
+       i_rpr_id --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+       )
+            values
+                (l_reqid,
+                demandid,
+                requestedamount,
+                l_date,
+                'REQUESTED',
+                scomment,
+                code,
+                daterec.i_rpr_id --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+                );
+
+--Return data to update Tesla
+
+            daterec
+            .
+            i_req_id
+            := l_reqid;
+    daterec.i_dbtr_id
+            := dbtrid;
+    daterec.i_demand_id
+            := demandid;
+    daterec.s_demappr_status
+            := 'REQUESTED';
+    daterec.n_requested_amount
+            := requestedamount;
+    daterec.d_requested_dt
+            := l_date;
+    daterec.s_comment
+            := scomment;
+    daterec.s_disappr_cd
+            := code;
+    daterec.cookie_id
+            := cookie_id;
+    daterec.s_per_username
+            := username;
+
+    --  logme ('PRX_PROXY','call sendIntMail', 'ERROR : ' || SQLERRM);
+    sendintmailtoproxima
+            (rprid,
+                         'Request for Dispute - Tesla',
+                         'Debtor with id: ' || dbtrid || ' and demand id: ' || to_char(daterec.i_demand_id),
+                         username,
+                         cookie_id,
+                         l_msg_mail);
+
+    msgret
+            := 'OK';
+            exception
+    when others then
+      logme('DF_PROXY', 'setDisputeDemands', 'ERROR : ' || sqlerrm);
+      msgret
+            := 'ERROR';
+            end;
+
+  procedure setemailmainapprdemands(dbtrid number,
+                                    rprid  number)
+            is
+            begin
+    df_mail.setemailmainapprdemands
+            (dbtrid, rprid);
+            end;
+
+  procedure setfinclacc(clntid          in number,
+                        accid           in number,
+                        requestedamount in number,
+                        username        in varchar2,
+                        cookie_id       in out number,
+                        msgret          out varchar2,
+                        daterec         in out df_stg_types.recfinclacc)
+            is
+    l_cnt      number;
+    l_reqid
+            number;
+    l_date
+            date;
+    l_msg_mail
+            varchar2(200);
+    l_rprid
+            number; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+    l_acc_count
+            number;
+    rprid
+            number;
+    id_array
+            id_type;
+            begin
+    rprid
+            := -1;
+    l_date
+            := sysdate;
+
+    --Put here rules to check or if has an older image
+    /* select count(*)
+    into l_cnt
+    from
+    WHERE
+    and (m.D_TIMESTAMP > l_date or c.D_TIMESTAMP > l_date );
+
+    if l_cnt > 0 then
+       msgRet := 'DIFF';
+       RETURN;
+    end if;*/
+            select claccfinreq_seq.nextval
+            into l_reqid
+            from dual;
+
+            logme
+            ('DF_PROXY', 'setFinClacc', 'before update : ');
+
+            SELECT i_rpr_id
+            into l_rprid
+            FROM sec_tesla_login
+            where lower(s_username) = lower(username); --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+            daterec
+            .
+            i_rpr_id
+            := l_rprid; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+
+            select count(*)
+            into l_acc_count
+            from sec_tesla_login
+                     inner join cmp_representative on (cmp_representative.i_rpr_id = sec_tesla_login.i_rpr_id)
+                     inner join client on (client.i_cmp_id = cmp_representative.i_cmp_id)
+                     inner join v_client_acc on (v_client_acc.i_clnt_id = client.i_clnt_id)
+            where sec_tesla_login.i_rpr_id = daterec.i_rpr_id
+              and v_client_acc.i_acc_id = accid;
+
+            IF
+            l_acc_count = 0 THEN
+       raise_application_error (-20099, 'Account ID not found');
+            END IF;
+
+    -- Save the request
+            insert into clacc_finance_request f (i_req_id,
+       i_acc_id,
+       n_requested_amount,
+       d_requested_dt,
+       n_requested_approved,
+       d_approved_dt,
+       i_prepayment_id,
+       s_demfin_status,
+       i_rpr_id --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+       )
+            values
+                (l_reqid,
+                accid,
+                requestedamount,
+                l_date,
+                null,
+                null,
+                null,
+                'REQUESTED',
+                daterec.i_rpr_id --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+                );
+
+--Return data to update Tesla
+
+            daterec
+            .
+            i_req_id
+            := l_reqid;
+    daterec.i_clnt_id
+            := clntid;
+    daterec.i_acc_id
+            := accid;
+    daterec.s_reqfin_status
+            := 'REQUESTED';
+    daterec.n_requested_amount
+            := requestedamount;
+    daterec.d_requested_dt
+            := l_date;
+    daterec.cookie_id
+            := cookie_id;
+    daterec.s_per_username
+            := username;
+
+    logme
+            ('DF_PROXY', 'setFinClacc', 'before send mail');
+
+    --  logme ('PRX_PROXY','call sendIntMailToproxima', 'ERROR : ' || SQLERRM);
+    sendintmailtoproxima
+            (rprid,
+                         'Request for Finance - Tesla',
+                         'Client with id: ' || clntid || ' and clacc id: ' || to_char(accid),
+                         username,
+                         cookie_id,
+                         l_msg_mail);
+
+    id_array
+            := id_type(l_reqid);
+
+    logme
+            ('DF_PROXY', 'setFinClacc', '1');
+    df_tesla_transaction.approveclaccfinancerequest
+            (id_array, -1);
+    logme
+            ('DF_PROXY', 'setFinClacc', '2');
+
+    msgret
+            := 'OK';
+            exception
+    when others then
+      logme('DF_PROXY', 'setFinClacc', 'ERROR : ' || sqlerrm);
+      msgret
+            := 'ERROR';
+            end;
+
+  procedure setsonetoone(clntid    in number,
+                         demandid  in number,
+                         username  in varchar2,
+                         cookie_id in out number,
+                         msgret    out varchar2,
+                         daterec   in out df_stg_types.recsonetoonedemands)
+            is
+    l_cnt      number;
+    l_reqid
+            number;
+    l_date
+            date;
+    l_msg_mail
+            varchar2(200);
+    l_rprid
+            number; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+    rprid
+            number;
+    id_array
+            id_type;
+            begin
+    rprid
+            := -1;
+    l_date
+            := sysdate;
+
+    --Put here rules to check or if has an older image
+    /* select count(*)
+    into l_cnt
+    from
+    WHERE
+    and (m.D_TIMESTAMP > l_date or c.D_TIMESTAMP > l_date );
+
+    if l_cnt > 0 then
+       msgRet := 'DIFF';
+       RETURN;
+    end if;*/
+            select claccfinreq_seq.nextval
+            into l_reqid
+            from dual;
+
+            SELECT i_rpr_id
+            into l_rprid
+            FROM sec_tesla_login
+            where lower(s_username) = lower(username); --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+            daterec
+            .
+            i_rpr_id
+            := l_rprid; --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+
+
+            SELECT COUNT(*)
+            INTO l_cnt
+            FROM demand
+                     INNER JOIN clideb_acc ON (demand.i_clideb_id = clideb_acc.i_clideb_id)
+                     INNER JOIN adm_product_params ON (clideb_acc.productcode = adm_product_params.productcode)
+            WHERE adm_product_params.b_isdd = 'Y'
+              AND demand.i_demand_id = demandid;
+
+            IF
+            l_cnt > 0 THEN
+    --DD
+
+    INSERT INTO demand_dd_request (
+        i_req_id,
+        i_demand_id,
+        I_TESLA_PER_ID,
+        d_req_tmst,
+        s_req_status,
+        s_err_msg,
+        i_err_id,
+        d_proc_tmst,
+        d_fin_dt,
+        d_timestamp
+    ) VALUES (
+        l_reqid,
+        demandid,
+        l_rprid,
+        l_date,
+        'REQUEST',
+        null,
+        null,
+        null,
+        NULL,
+        SYSDATE
+    );
+
+            ELSE
+    --FACTORING
+
+        insert into demand_sonetoone_request a
+          (i_req_id,
+           i_demand_id,
+           d_requested_dt,
+           s_sonetoone_status,
+           d_timestamp,
+           i_rpr_id --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+           )
+        values
+          (l_reqid,
+           demandid,
+           l_date,
+           'REQUESTED',
+           sysdate,
+           daterec.i_rpr_id --** I.R. 22/01/2020 KT & AD Request to Add Representative @ all Setters
+           );
+
+            END IF;
+
+    --Return data to update Tesla
+
+    daterec.i_req_id
+            := l_reqid;
+    --  dateRec.i_dbtr_id         := dbtrid;
+    daterec.i_demand_id
+            := demandid;
+    daterec.s_sonetoone_status
+            := 'REQUESTED';
+    daterec.d_requested_dt
+            := l_date;
+    daterec.cookie_id
+            := cookie_id;
+    daterec.s_per_username
+            := username;
+
+    --  logme ('PRX_PROXY','call sendIntMail', 'ERROR : ' || SQLERRM);
+
+    -- sendIntMailToproxima (rprId, 'Request for Financial - Tesla','Client with id: ' || clntid || ' and demand id: ' || to_char(dateRec.I_DEMAND_ID), userName, cookie_id, l_msg_mail);
+
+    --id_array := id_type(demandid);
+    id_array
+            := id_type(l_reqid); --** ?.?. 17.03.2020
+    IF
+            l_cnt <=0 THEN
+        df_tesla_transaction.approvedemandfinancerequest(id_array, -1);
+            end if;
+
+    msgret
+            := 'OK';
+            exception
+    when others then
+      logme('DF_PROXY', 'setSOneToOne', 'ERROR : ' || sqlerrm);
+      msgret
+            := 'ERROR';
+            end;
+
+  procedure setuploadfiles(auth_id  in number,
+                           authtype in varchar2,
+                           username in varchar2,
+                           load_id  in number,
+                           msgret   out varchar2,
+                           datarec  in out df_stg_types.recuploadfiles)
+            is
+    type reftyp is ref cursor;
+    datadefs
+            reftyp;
+    l_blob_id
+            number;
+    cookie_id
+            number;
+    l_entity_cnt
+            number;
+            begin
+
+    -- select AGREEMENT_BLOB_SEQ.nextval into l_blob_id from dual;
+    -- datarec.s_blob_char := 'TU';
+            case datarec.s_entity_tp
+      when 'RB' then
+            select count(i_batch_id)
+            into l_entity_cnt
+            from batch
+            where object_tp = 'DEMAND'
+              and i_batch_id = datarec.i_entity_id;
+            datarec
+            .
+            s_level
+            := 'RECEIVABLE*BATCH';
+            when 'PB' then
+            select count(i_batch_id)
+            into l_entity_cnt
+            from batch
+            where object_tp = 'PAYMENT'
+              and i_batch_id = datarec.i_entity_id;
+            datarec
+            .
+            s_level
+            := 'PAYMENT*BATCH';
+            when 'CB' then
+            select count(i_batch_id)
+            into l_entity_cnt
+            from batch
+            where object_tp = 'CRNOTE'
+              and i_batch_id = datarec.i_entity_id;
+            datarec
+            .
+            s_level
+            := 'CRENOTE*BATCH';
+            when 'FS' then
+        l_entity_cnt := 1;
+        datarec.s_level
+            := 'FUTURE*STAGE';
+            when 'CL' then
+            SELECT COUNT(DISTINCT i_clnt_id)
+            into l_entity_cnt
+            FROM clideb_acc
+            WHERE i_clnt_id = auth_id
+              and i_acc_id = datarec.i_entity_id;
+            datarec
+            .
+            s_level
+            := 'CLACC*CLACC';
+            when 'CC' then
+            SELECT COUNT(DISTINCT i_clnt_id)
+            into l_entity_cnt
+            FROM clideb_acc
+            WHERE i_clnt_id = auth_id
+              and i_clnt_id = datarec.i_entity_id;
+            datarec
+            .
+            s_level
+            := 'CLIENT*CLIENT';
+            when 'CD' then
+            SELECT COUNT(DISTINCT i_clnt_id)
+            into l_entity_cnt
+            FROM clideb_acc
+            WHERE i_dbtr_id = auth_id
+              and i_clnt_id = datarec.i_entity_id;
+            datarec
+            .
+            s_level
+            := 'CLIENT*CLIENT';
+            when 'DC' then
+            SELECT COUNT(DISTINCT i_clnt_id)
+            into l_entity_cnt
+            FROM clideb_acc
+            WHERE i_clnt_id = auth_id
+              and i_dbtr_id = datarec.i_entity_id;
+            datarec
+            .
+            s_level
+            := 'DEBTOR*DEBTOR';
+            when 'DD' then
+            SELECT COUNT(DISTINCT i_dbtr_id)
+            into l_entity_cnt
+            FROM clideb_acc
+            WHERE i_dbtr_id = auth_id
+              and i_dbtr_id = datarec.i_entity_id;
+            datarec
+            .
+            s_level
+            := 'DEBTOR*DEBTOR';
+            else
+        --UT
+            SELECT COUNT(DISTINCT i_load_id)
+            into l_entity_cnt
+            FROM load_rec_role_flow_batch
+            WHERE i_load_id = -1 * datarec.i_entity_id;
+            datarec
+            .
+            s_level
+            := 'UNCHECKED*TESLA';
+            end
+            case;
+
+    IF
+            l_entity_cnt = 0 THEN
+       raise_application_error (-20099, 'Entity ID not found');
+            END IF;
+    IF
+            l_entity_cnt > 1 THEN
+       raise_application_error (-20100, 'Entity ID not unique');
+            END IF;
+
+            insert into relations_blob_det
+            (i_blob_id,
+             s_blob_char,
+             s_blob_title,
+             d_ins_dt,
+             s_level,
+             i_ref_id,
+             i_per_id,
+             d_timestamp,
+             d_sign_dt,
+             d_sign2_dt,
+             i_doc_id --** I.R. ENBDSP-234 12/02/2020
+            )
+            values (datarec.i_load_id,
+                    datarec.s_blob_char,
+                    datarec.s_file_name,
+                    sysdate,
+                    datarec.s_level,
+                    datarec.i_entity_id,
+                       ---1,
+                    auth_id,
+                    sysdate,
+                    null,
+                    null,
+                    datarec.i_doc_id --** I.R. ENBDSP-234 12/02/2020
+                   );
+
+            insert into agreement_blob
+            (i_blob_id, l_blob, i_blob_size, s_blob_exten, s_blob_content_tp, i_per_id, d_timestamp)
+            values (datarec.i_load_id,
+                    datarec.s_file_body,
+                    datarec.i_blob_size,
+                    datarec.s_blob_exten,
+                    datarec.s_blob_content_tp,
+                       ---1,
+                    auth_id,
+                    sysdate);
+
+            if
+            datarec.s_entity_tp = 'CC' then
+
+        sendintmailtoproxima( datarec.i_rpr_id,
+                                'New attachment from supplier ' || to_char(auth_id),
+                                'New attachment from supplier ' || to_char(auth_id),
+                                username,
+                                cookie_id,
+                                msgret);
+
+            end if;
+
+    if
+            datarec.s_entity_tp = 'DD' then
+
+        sendintmailtoproxima( datarec.i_rpr_id,
+                                'New attachment from buyer ' || to_char(auth_id),
+                                'New attachment from buyer ' || to_char(auth_id),
+                                username,
+                                cookie_id,
+                                msgret);
+            end if;
+
+    msgret
+            := 'OK';
+            exception
+    when others then
+      msgret := msgret || ', ' || sqlerrm || ', ERROR';
+      logme
+            ('DF_PROXY', 'setUploadFiles', msgret);
+            end;
+
+  PROCEDURE setCmpRepresentative(auth_id  IN NUMBER,
+                                 authtype IN VARCHAR2,
+                                 userName IN VARCHAR2,
+                                 cmp_rec  IN df_stg_types.trecCmpRepresentative,
+                                 msgRet   OUT VARCHAR2)
+            is
+        cmp_id  NUMBER(10, 0);
+        rprid
+            NUMBER(10, 0);
+        i
+            number := 1;
+        cnt
+            number;
+            begin
+
+    if
+            authtype = 'C' then
+            select i_cmp_id
+            into cmp_id
+            from client
+            where i_clnt_id = auth_id;
+            elsif
+            authtype = 'D' then
+            select i_cmp_id
+            into cmp_id
+            from debtor
+            where i_dbtr_id = auth_id;
+            end if;
+
+--        IF cmp_rec(i).i_cmp_id = cmp_id THEN
+
+        IF
+            cmp_id is not null and cmp_id = cmp_rec(i).I_CMP_ID THEN
+
+            IF cmp_rec(i).I_RPR_ID = -1 THEN
+
+                rprid := SEC_PERSON_T_SEQ.nextVal;
+
+            ELSIF
+            cmp_rec(i).I_RPR_ID <> -1 THEN
+
+            select count(*)
+            into cnt
+            from representative r,
+                 cmp_representative cr,
+                 sec_tesla_login stl
+            where r.i_rpr_id = cr.i_rpr_id
+              and r.i_rpr_id = stl.i_rpr_id
+              and cr.i_cmp_id = cmp_id
+              and r.i_rpr_id = cmp_rec(i).I_RPR_ID;
+
+            IF
+            cnt = 0 THEN
+
+                    RAISE_APPLICATION_ERROR(-20000, 'Mismatched Company and Representative.');
+
+            END IF;
+
+            END IF;
+
+            merge into representative r
+                using (select cmp_rec(i).I_CRS_ID     I_CRS_ID,
+                              cmp_rec(i).S_FNAME      S_FNAME,
+                              cmp_rec(i).S_LNAME      S_LNAME,
+                              cmp_rec(i).S_OFFICE_TEL S_OFFICE_TEL,
+                              cmp_rec(i).S_FAX_TEL    S_FAX_TEL,
+                              cmp_rec(i).S_MOBIL_TEL  S_MOBIL_TEL,
+                              cmp_rec(i).S_EMAIL      S_EMAIL,
+                              -10                     per_id,
+                              sysdate                 tmstp
+                       from dual) d
+                on (r.I_RPR_ID = cmp_rec(i).I_RPR_ID)
+                when matched then update set
+                    r.I_CRS_ID = d.I_CRS_ID,
+                    r.S_FNAME = d.S_FNAME,
+                    r.S_LNAME = d.S_LNAME,
+                    r.S_OFFICE_TEL = d.S_OFFICE_TEL,
+                    r.S_FAX_TEL = d.S_FAX_TEL,
+                    r.S_MOBIL_TEL = d.S_MOBIL_TEL,
+                    r.S_EMAIL = d.S_EMAIL,
+                    r.I_PER_ID = d.per_id,
+                    r.D_TIMESTAMP = d.tmstp where nvl(r.I_CRS_ID, -9999999)     <> nvl(d.I_CRS_ID, -9999999) OR
+                      nvl(r.S_FNAME, 'DUMMY')       <> nvl(d.S_FNAME, 'DUMMY') OR
+                      nvl(r.S_LNAME, 'DUMMY')       <> nvl(d.S_LNAME, 'DUMMY') OR
+                      nvl(r.S_OFFICE_TEL, 'DUMMY')  <> nvl(d.S_OFFICE_TEL, 'DUMMY') OR
+                      nvl(r.S_FAX_TEL, 'DUMMY')     <> nvl(d.S_FAX_TEL, 'DUMMY') OR
+                      nvl(r.S_MOBIL_TEL, 'DUMMY')   <> nvl(d.S_MOBIL_TEL, 'DUMMY') OR
+                      nvl(r.S_EMAIL, 'DUMMY')       <> nvl(d.S_EMAIL, 'DUMMY')
+            when not matched then insert
+                                         (  R.I_RPR_ID,
+                                            R.I_CRS_ID,
+                                            R.S_FNAME,
+                                            R.S_LNAME,
+                                            R.S_OFFICE_TEL,
+                                            R.S_FAX_TEL,
+                                            R.S_MOBIL_TEL,
+                                            R.S_EMAIL,
+                                            R.I_PER_ID,
+                                            R.D_TIMESTAMP )
+            VALUES  ( rprid,
+                      d.I_CRS_ID,
+                      d.S_FNAME,
+                      d.S_LNAME,
+                      d.S_OFFICE_TEL,
+                      d.S_FAX_TEL,
+                      d.S_MOBIL_TEL,
+                      d.S_EMAIL,
+                      d.per_id,
+                      d.tmstp);
+
+            merge into cmp_representative cr
+                using (select -- cmp_rec(i).I_CMP_ID I_CMP_ID,
+                              cmp_rec(i).C_ACCESS_TYPE C_ACCESS_TYPE,
+                              -10                      per_id,
+                              sysdate                  tmstp,
+                              cmp_rec(i).B_ISADMIN     B_ISADMIN
+                       from dual) d
+                on (cr.I_RPR_ID = cmp_rec(i).I_RPR_ID and cmp_rec(i).I_CMP_ID = cmp_id)
+                when matched then update set
+                    cr.C_ACCESS_TYPE = d.C_ACCESS_TYPE,
+                    cr.I_PER_ID = d.per_id,
+                    cr.D_TIMESTAMP = d.tmstp,
+                    cr.B_ISADMIN = d.B_ISADMIN where NVL(cr.C_ACCESS_TYPE, 'DUMMY') <> d.C_ACCESS_TYPE OR
+                      NVL(cr.B_ISADMIN, 'DUMMY')     <> d.B_ISADMIN
+      when not matched then insert
+                                         ( cr.I_RPR_ID,
+                                           cr.I_CMP_ID,
+                                           cr.C_ACCESS_TYPE,
+                                           cr.I_PER_ID,
+                                           cr.D_TIMESTAMP,
+                                           cr.B_ISADMIN)
+            VALUES  ( rprid,
+                      cmp_id,
+                      d.C_ACCESS_TYPE,
+                      d.per_id,
+                      d.tmstp,
+                      d.B_ISADMIN);
+
+            merge into sec_tesla_login stl
+                using (select cmp_rec(i).S_USERNAME        S_USERNAME,
+                              cmp_rec(i).S_PWD             S_PWD,
+                              cmp_rec(i).D_EXPIRED_AT      D_EXPIRED_AT,
+                              cmp_rec(i).B_ISACTIVE        B_ISACTIVE,
+                              cmp_rec(i).B_ISLOCKED        B_ISLOCKED,
+                              cmp_rec(i).I_FAILED_ATTEMPTS I_FAILED_ATTEMPTS,
+                              -10                          per_id,
+                              sysdate                      tmstp
+                       from dual) d
+                on (stl.I_RPR_ID = cmp_rec(i).I_RPR_ID)
+                when matched then update set
+                    stl.S_PWD = nvl(d.S_PWD, stl.S_PWD),
+                    stl.D_EXPIRED_AT = d.D_EXPIRED_AT,
+                    stl.B_ISACTIVE = d.B_ISACTIVE,
+                    stl.B_ISLOCKED = d.B_ISLOCKED,
+                    stl.I_FAILED_ATTEMPTS = d.I_FAILED_ATTEMPTS,
+                    stl.I_PER_ID = d.per_id,
+                    stl.D_TIMESTAMP = d.tmstp where NVL(stl.S_PWD, 'DUMMY')                                     <> d.S_PWD OR
+                      NVL(stl.D_EXPIRED_AT, TO_DATE('01/01/0001', 'DD/MM/YYYY'))  <> d.D_EXPIRED_AT OR
+                      NVL(stl.B_ISACTIVE, 'DUMMY')                                <> d.B_ISACTIVE OR
+                      NVL(stl.B_ISLOCKED, 'DUMMY')                                <> d.B_ISLOCKED OR
+                      NVL(stl.I_FAILED_ATTEMPTS, -9999999)                        <> d.I_FAILED_ATTEMPTS
+      when not matched then insert
+                                         ( stl.S_USERNAME,
+                                           stl.S_PWD,
+                                           stl.D_EXPIRED_AT,
+                                           stl.B_ISACTIVE,
+                                           stl.B_ISLOCKED,
+                                           stl.I_FAILED_ATTEMPTS,
+                                           stl.I_RPR_ID,
+                                           stl.I_PER_ID,
+                                           stl.D_TIMESTAMP )
+            VALUES  ( d.S_USERNAME,
+                      d.S_PWD,
+                      d.D_EXPIRED_AT,
+                      d.B_ISACTIVE,
+                      d.B_ISLOCKED,
+                      0,
+                      rprid,
+                      d.per_id,
+                      d.tmstp);
+
+--** Mirror Representative 12/12/2019 START
+            IF
+            cmp_rec(i).I_RPR_ID = -1 THEN
+
+                setMirrorRepresentative (cmp_id, rprid, 'INSERT');
+
+            END IF;
+            --** Mirror Representative 12/12/2019 END
+
+            msgret
+            := 'OK';
+
+            END IF;
+
+            EXCEPTION WHEN OTHERS THEN
+
+            msgret := 'Process Failed';
+
+            teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setCmpRepresentative', 'ERROR : ' || SQLERRM, cmp_id);
+
+        RAISE;
+
+            end;
+
+  PROCEDURE setMirrorRepresentative (
+        cmpid         IN             NUMBER,
+        rprid         IN             NUMBER,
+        action        IN             VARCHAR2
+        )
+            IS
+        fail_ergo_delete EXCEPTION;
+
+        mirror_rprid
+            NUMBER(10, 0);
+
+        returnCode
+            PLS_INTEGER;
+        returnText
+            VARCHAR2(4000 CHAR);
+
+            BEGIN
+
+        IF
+            cmpid is not null and rprid is not null THEN
+
+            IF action = 'INSERT' THEN
+
+                mirror_rprid := SEC_PERSON_T_SEQ.nextVal;
+
+            insert into representative(I_RPR_ID,
+                                       I_CRS_ID,
+                                       S_FNAME,
+                                       S_LNAME,
+                                       S_OFFICE_TEL,
+                                       S_FAX_TEL,
+                                       S_MOBIL_TEL,
+                                       S_EMAIL,
+                                       I_PER_ID,
+                                       D_TIMESTAMP)
+            select mirror_rprid,
+                   r.I_CRS_ID,
+                   r.S_FNAME,
+                   r.S_LNAME,
+                   r.S_OFFICE_TEL,
+                   r.S_FAX_TEL,
+                   r.S_MOBIL_TEL,
+                   r.S_EMAIL,
+                   -10     as I_PER_ID,
+                   sysdate as D_TIMESTAMP
+            from representative r
+            where r.I_RPR_ID = rprid;
+
+            insert into cmp_representative(I_RPR_ID,
+                                           I_CMP_ID,
+                                           C_ACCESS_TYPE,
+                                           I_PER_ID,
+                                           D_TIMESTAMP,
+                                           B_ISADMIN,
+                                           I_LINKED_RPR_ID,
+                                           B_ISENQUIRY)
+            select mirror_rprid,
+                   cr.I_CMP_ID,
+                   cr.C_ACCESS_TYPE,
+                   -10     as I_PER_ID,
+                   sysdate as D_TIMESTAMP,
+                   cr.B_ISADMIN,
+                   cr.I_RPR_ID,
+                   'Y'
+            from cmp_representative cr
+            where cr.I_RPR_ID = rprid
+              and cr.I_CMP_ID = cmpid;
+
+            insert into sec_tesla_login(S_USERNAME,
+                                        S_PWD,
+                                        D_EXPIRED_AT,
+                                        B_ISACTIVE,
+                                        B_ISLOCKED,
+                                        I_FAILED_ATTEMPTS,
+                                        I_RPR_ID,
+                                        I_PER_ID,
+                                        D_TIMESTAMP)
+            select stl.S_USERNAME || '_mirror',
+                   '$2a$10$MDbTPqS.Q47fymTTVulhr.BjdrXQ/GGlMTaQkc6SOgU/lIoYzd00e', -- Bcrypted word 'password'
+                   add_months(sysdate, 12 * 100),
+                   stl.B_ISACTIVE,
+                   stl.B_ISLOCKED,
+                   stl.I_FAILED_ATTEMPTS,
+                   mirror_rprid,
+                   -10     as I_PER_ID,
+                   sysdate as D_TIMESTAMP
+            from sec_tesla_login stl
+            where stl.I_RPR_ID = rprid;
+
+            INSERT INTO TESLA_REPR_EXCLUDE_ROLE TRER (  I_RPR_ID,
+                                                            S_ROLE_CODE,
+                                                            I_PER_ID,
+                                                            D_TIMESTAMP,
+                                                            I_CMP_ID)
+            select mirror_rprid,
+                   TRER.S_ROLE_CODE,
+                   -10     as I_PER_ID,
+                   sysdate as D_TIMESTAMP,
+                   TRER.I_CMP_ID
+            from TESLA_REPR_EXCLUDE_ROLE TRER
+            where TRER.I_RPR_ID = rprid
+              and TRER.I_CMP_ID = cmpid;
+
+
+            ELSIF
+            action = 'DELETE' THEN
+
+            begin
+
+            SELECT cr.i_rpr_id
+            into mirror_rprid
+            from cmp_representative cr
+            where cr.I_LINKED_RPR_ID = rprid
+              and cr.I_CMP_ID = cmpid;
+
+            exception when no_data_found then
+
+                    mirror_rprid := null;
+
+            end;
+
+                --delete tesla-ergo home charts
+                PUTTESLADATASTG.deleteHomeDashboard
+            (rprid, returnCode, returnText);
+                if
+            returnCode = -1 then
+                    raise fail_ergo_delete;
+            end if;
+
+                if
+            mirror_rprid is not null then
+
+            DELETE
+            FROM TESLA_REPR_EXCLUDE_ROLE TRER
+            where TRER.I_RPR_ID = mirror_rprid
+              and TRER.I_CMP_ID = cmpid;
+
+            DELETE
+            FROM sec_tesla_login_tc stltc
+            where stltc.s_username in (SELECT S_USERNAME FROM sec_tesla_login stl where stl.I_RPR_ID = mirror_rprid);
+
+            DELETE
+            FROM sec_tesla_login stl
+            where stl.I_RPR_ID = mirror_rprid;
+
+            DELETE
+            FROM cmp_representative cr
+            where cr.I_RPR_ID = mirror_rprid
+              and cr.I_CMP_ID = cmpid;
+
+            DELETE
+            FROM representative cr
+            where cr.I_RPR_ID = mirror_rprid;
+
+--delete tesla-ergo home charts
+            PUTTESLADATASTG
+            .
+            deleteHomeDashboard
+            (mirror_rprid, returnCode, returnText);
+                    if
+            returnCode = -1 then
+                        raise fail_ergo_delete;
+            end if;
+
+            end if;
+
+            ELSIF
+            action = 'UPDATE' THEN
+
+            begin
+
+            SELECT cr.i_rpr_id
+            into mirror_rprid
+            from cmp_representative cr
+            where cr.I_LINKED_RPR_ID = rprid
+              and cr.I_CMP_ID = cmpid;
+
+            exception when no_data_found then
+
+                    mirror_rprid := null;
+
+            end;
+
+                if
+            mirror_rprid is not null then
+
+                    merge into cmp_representative cr
+                    using (
+                        select
+                        I_RPR_ID,
+                        I_CMP_ID,
+                        C_ACCESS_TYPE,
+                        I_PER_ID,
+                        D_TIMESTAMP,
+                        B_ISADMIN,
+                        I_LINKED_RPR_ID,
+                        B_ISENQUIRY,
+                        sysdate tmstp,
+                        -10 per_id
+                        from cmp_representative
+                        where I_RPR_ID = rprid and I_CMP_ID = cmpid
+                    ) d
+                    on (cr.I_LINKED_RPR_ID = rprid and cr.I_CMP_ID = cmpid)
+                    when matched then
+            update set
+                cr.C_ACCESS_TYPE = d.C_ACCESS_TYPE,
+                cr.I_PER_ID = d.per_id,
+                cr.D_TIMESTAMP = d.tmstp,
+                cr.B_ISADMIN = d.B_ISADMIN
+            where NVL(cr.C_ACCESS_TYPE
+                , 'DUMMY') <> d.C_ACCESS_TYPE
+               OR
+                NVL(cr.B_ISADMIN
+                , 'DUMMY') <> d.B_ISADMIN;
+
+
+            DELETE
+            FROM TESLA_REPR_EXCLUDE_ROLE TRER
+            where TRER.I_RPR_ID = mirror_rprid
+              and TRER.I_CMP_ID = cmpid;
+
+            INSERT INTO TESLA_REPR_EXCLUDE_ROLE TRER (  I_RPR_ID,
+                                                                S_ROLE_CODE,
+                                                                I_PER_ID,
+                                                                D_TIMESTAMP,
+                                                                I_CMP_ID)
+            select mirror_rprid,
+                   TRER.S_ROLE_CODE,
+                   -10     as I_PER_ID,
+                   sysdate as D_TIMESTAMP,
+                   TRER.I_CMP_ID
+            from TESLA_REPR_EXCLUDE_ROLE TRER
+            where TRER.I_RPR_ID = rprid
+              and TRER.I_CMP_ID = cmpid;
+
+            end if;
+
+            END IF;
+
+            END IF;
+
+            EXCEPTION WHEN OTHERS THEN
+
+        teslalogme('DF_TESLA_PROXY_DEV', 'setMirrorRepresentative', 'ERROR : ' || SQLERRM, cmpid);
+        raise;
+
+            END;
+
+  PROCEDURE setRprRoles(auth_id  IN NUMBER,
+                        authtype IN VARCHAR2,
+                        rprid    IN NUMBER,
+                        cmpid    IN NUMBER,
+                        roleCd   IN VARCHAR2,
+                        action   IN VARCHAR2,
+                        msgRet   OUT VARCHAR2)
+            is
+        lcmpid  NUMBER(10, 0);
+        cnt
+            number;
+            begin
+
+    if
+            authtype = 'C' then
+            select i_cmp_id
+            into lcmpid
+            from client
+            where i_clnt_id = auth_id;
+            elsif
+            authtype = 'D' then
+            select i_cmp_id
+            into lcmpid
+            from debtor
+            where i_dbtr_id = auth_id;
+            end if;
+
+        if
+            lcmpid = cmpid then
+
+            if action = 'INCLUDE' then
+
+            DELETE
+            FROM TESLA_REPR_EXCLUDE_ROLE TRER
+            WHERE TRER.I_RPR_ID = rprid
+              AND TRER.S_ROLE_CODE = roleCd
+              AND TRER.I_CMP_ID = cmpid;
+
+            msgret
+            := 'OK';
+
+            elsif
+            action = 'EXCLUDE' then
+
+            select count(*)
+            into cnt
+            from representative r,
+                 cmp_representative cr,
+                 sec_tesla_login stl
+            where r.i_rpr_id = cr.i_rpr_id
+              and r.i_rpr_id = stl.i_rpr_id
+              and cr.i_cmp_id = cmpid
+              and r.i_rpr_id = rprid;
+
+            IF
+            cnt = 0 THEN
+
+                    RAISE_APPLICATION_ERROR(-20000, 'Mismatched Company and Representative.');
+
+            END IF;
+
+            INSERT INTO TESLA_REPR_EXCLUDE_ROLE TRER (I_RPR_ID, S_ROLE_CODE, I_PER_ID, D_TIMESTAMP, I_CMP_ID)
+            VALUES ( rprid, roleCd, -10, SYSDATE, cmpid);
+
+            msgret
+            := 'OK';
+
+            end if;
+
+            setMirrorRepresentative
+            (cmpid, rprid, 'UPDATE'); --** Mirror Representative 12/12/2019
+
+            end if;
+
+            exception when others then
+
+        msgret := 'Process Failed';
+
+        teslalogme
+            ('DF_TESLA_PROXY_DEV', 'setRprRoles', 'ERROR : ' || SQLERRM, cmpid);
+
+        RAISE;
+
+            end;
+
+
+  procedure getkatholiko(auth_id   in number,
+                         authtype  in varchar2,
+                         claccid   in number,
+                         datefrom  in date,
+                         dateto    in date,
+                         username  in varchar2,
+                         cookie_id out number,
+                         datalist  in out df_stg_types.treckatholiko,
+                         header    in out df_stg_types.recclacc)
+            is
+    l_datefrom  date;
+    l_dateto
+            date;
+    eod_proxima
+            date;
+            begin
+    eod_proxima
+            := trunc(sysdate);
+
+    -- Dates ++
+    --Get History limit
+            select n_param_val_nbr
+            into history_days
+            from adm_param
+            where s_param_cd = 'SYS_WEB_HISTORY_DAYS';
+
+--Post Date From/To
+
+            l_datefrom
+            := datefrom;
+    l_dateto
+            := dateto;
+    limitofdates
+            (history_days, l_datefrom, l_dateto);
+
+
+    eod_proxima
+            := TRUNC(SYSDATE);
+
+    df_print_stat.p_print_bal_acc
+            (  claccId,
+                                     DateFrom,
+                                     DatetO,
+                                     1,
+                                     cookie_id);
+
+            BEGIN   --** I.R. 10/06/2019 NBG-100
+
+            SELECT v.i_clnt_id,
+                   'C',
+                   v.i_cmp_id,
+                   v.s_cmp_snm,
+                   v.s_cmp_nm,
+                   v.s_trcode_desc,
+                   v.s_vat_nr,
+                   v.i_clnt_id,
+                   v.s_addr,
+                   v.s_zip_cd,
+                   v.s_city,
+                   v.s_area,
+                   v.s_office_tel,
+                   v.i_contr_id,
+                   v.c_bustype_cd,
+                   v.c_agrmtype_cd,
+                   v.c_confdntype_cd,
+                   v.i_acc_id,
+                   v.c_paymnt_tp,
+                   v.i_curr_id,
+                   v.s_acc_nbr,
+                   v.s_curr_cd,
+                   v.clacc_fl,
+                   contract_fl,
+                   v.client_fl,
+                   v.d_last_capital_dt,
+                   v.d_next_capital_dt,
+                   v.b_isactive,
+                   v.d_status_final_odu,
+                   v.d_status_liability,
+                   v.s_crs_id,
+                   v.d_fundlimit_end_dt,
+                   v.d_end_dt,
+                   v.clacc_cat,
+                   v.i_basel_cat_tp,
+                   v.i_group_id,
+                   v.country_iso,
+                   v.s_nace_code,
+                   v.bankbranch,
+                   v.d_start_acc_dt,
+                   v.d_stop_interest,
+                   v.d_redeem_dt,
+                   cookie_id,
+                   sysdate,
+                   userName,
+                   a.s_irs_nm,
+
+                   null, --** I.R. ENBD 26/06/2018
+                   --** I.R. FLF-32 03/06/2019 START
+                   (select adm_products.s_visual_name
+                    from adm_products
+                    where v.s_product_subtype = adm_products.productcode
+                      and rownum < 2) as s_product_visual
+                   --** I.R. FLF-32 03/06/2019 END
+            INTO header
+            FROM v_clacc v,
+                 company c,
+                 adm_irs a
+            WHERE c.I_CMP_ID = v.I_CMP_ID
+              AND c.I_IRS_ID(+) = a.I_IRS_ID
+              AND v.i_clnt_id = auth_id
+              AND v.i_acc_id = claccId
+              AND v.d_end_dt IS NULL;
+
+            EXCEPTION WHEN NO_DATA_FOUND THEN   --** I.R. 10/06/2019 NBG-100 START
+
+            NULL; -- IGNORE THE ERROR
+
+            END;   --** I.R. 10/06/2019 NBG-100 END
+
+            WITH rep_katholiko_nbgr AS (
+                SELECT eod_proxima                                     dt,
+                       trunc(DateFrom) - 1                             opening_dt,
+                       sys_xy_print.post_dt,
+                       company.s_cmp_snm                            AS s_clnt_fnm,
+                       v_clacc.i_acc_id,
+                       company.s_crs_id,
+                       clcontract.s_contr_nbr,
+                       company.s_vat_nr,
+                       adm_irs.s_irs_cd                             AS s_irs_nm,
+                       company_address.s_addr
+                           || ' '
+                           || company_address.s_area                   s_addr,
+                       company_address.s_zip_cd,
+                       company_address.s_city,
+                       sys_xy_print.i_clnt_id,
+                       DECODE(clacc.b_display_factoring_tp, 'Y', (
+                                                                     SELECT s_val_label
+                                                                     FROM adm_lookup_2
+                                                                     WHERE s_val = v_clacc.c_bustype_cd
+                                                                       AND s_lkup_col = 'C_BUSTYPE_CD'
+                                                                       AND s_lkup_table = 'CLCONTRACT'
+                                                                       AND lang_id = 1
+                                                                 )
+                           || '/ '
+                           || (
+                                                                     SELECT s_val_label
+                                                                     FROM adm_lookup_2
+                                                                     WHERE s_val = v_clacc.c_agrmtype_cd
+                                                                       AND s_lkup_col = 'C_AGRMTYPE_CD'
+                                                                       AND s_lkup_table = 'CLCONTRACT'
+                                                                       AND lang_id = 1
+                                                                 )
+                           || '/ '
+                           || (
+                                                                     SELECT s_val_label
+                                                                     FROM adm_lookup_2
+                                                                     WHERE s_val = v_clacc.c_confdntype_cd
+                                                                       AND s_lkup_col = 'C_CONFDNTYPE_CD'
+                                                                       AND s_lkup_table = 'CLCONTRACT'
+                                                                       AND lang_id = 1
+                                                                 )) AS s_clnt_acc_nm,
+                       sys_xy_print.doctext,
+                       sys_xy_print.docno,
+                       sys_xy_print.valeur_dt,
+                       adm_currency.s_curr_cd,
+                       sys_xy_print.n_amnt
+                FROM sys_xy_print,
+                     v_clacc,
+                     clcontract,
+                     company,
+                     adm_irs,
+                     clacc,
+                     company_address,
+                     adm_currency
+                WHERE (v_clacc.i_acc_id = sys_xy_print.i_acc_id)
+                  AND (sys_xy_print.cookie_id IN (
+                    cookie_id
+                    ))
+                  AND clcontract.i_contr_id = v_clacc.i_contr_id
+                  AND company.i_cmp_id = v_clacc.i_cmp_id
+                  AND adm_irs.i_irs_id = company.i_irs_id
+                  AND clacc.i_acc_id = v_clacc.i_acc_id
+                  AND (company.i_cmp_id = company_address.i_cmp_id(+))
+                  AND (nvl(company_address.i_cmpaddrtp_id, 1) = 1)
+                  AND v_clacc.i_curr_id = adm_currency.i_curr_id
+                  AND v_clacc.b_isactive = 'Y'
+                  AND v_clacc.i_clnt_id = auth_id
+                  AND v_clacc.i_acc_id = claccid
+                  AND trunc(sys_xy_print.valeur_dt) BETWEEN DateFrom AND DateTo
+            ),
+                 set2 AS (
+                     SELECT nvl((
+                                    SELECT csh.n_totalledger_amnt
+                                    FROM clacc_state_hist csh
+                                    WHERE csh.i_acc_id = claccid
+                                      AND trunc(csh.d_timestamp) = trunc(DateFrom) - 1
+                                ), 0.0) AS n_totalledger_amnt,
+                            auth_id        clnt_id,
+                            claccid        clacc_id
+                     FROM dual
+                 )
+            SELECT rep_katholiko_nbgr.dt,
+                   rep_katholiko_nbgr.opening_dt                                             AS opening_dt,
+                   rep_katholiko_nbgr.post_dt,
+                   rep_katholiko_nbgr.s_clnt_fnm,
+                   rep_katholiko_nbgr.i_acc_id,
+                   rep_katholiko_nbgr.s_crs_id,
+                   rep_katholiko_nbgr.s_contr_nbr,
+                   rep_katholiko_nbgr.s_vat_nr,
+                   rep_katholiko_nbgr.s_irs_nm,
+                   rep_katholiko_nbgr.s_addr,
+                   rep_katholiko_nbgr.s_zip_cd,
+                   rep_katholiko_nbgr.s_city,
+                   rep_katholiko_nbgr.i_clnt_id,
+                   rep_katholiko_nbgr.s_clnt_acc_nm,
+                   rep_katholiko_nbgr.doctext,
+                   rep_katholiko_nbgr.docno,
+                   rep_katholiko_nbgr.valeur_dt,
+                   rep_katholiko_nbgr.s_curr_cd,
+                   rep_katholiko_nbgr.n_amnt,
+                   n_totalledger_amnt + nvl(SUM(rep_katholiko_nbgr.n_amnt) OVER(
+            ORDER BY
+                rep_katholiko_nbgr.s_contr_nbr,
+                rep_katholiko_nbgr.i_acc_id,
+                rep_katholiko_nbgr.valeur_dt,
+                rep_katholiko_nbgr.post_dt,
+                rep_katholiko_nbgr.doctext,
+                rep_katholiko_nbgr.docno,
+                rep_katholiko_nbgr.n_amnt
+            ), 0) AS py,
+                   n_totalledger_amnt,
+                   trunc(DateFrom) - 1,
+                   cookie_id,
+                   SYSDATE,
+                   username
+                                                                                                BULK COLLECT
+            INTO datalist
+            FROM rep_katholiko_nbgr
+                     INNER JOIN set2 ON (rep_katholiko_nbgr.i_clnt_id = set2.clnt_id
+                AND rep_katholiko_nbgr.i_acc_id = set2.clacc_id)
+            ORDER BY rep_katholiko_nbgr.s_contr_nbr,
+                     rep_katholiko_nbgr.i_acc_id,
+                     rep_katholiko_nbgr.valeur_dt,
+                     rep_katholiko_nbgr.post_dt,
+                     rep_katholiko_nbgr.doctext,
+                     rep_katholiko_nbgr.docno,
+                     rep_katholiko_nbgr.n_amnt;
+
+            DELETE
+            FROM sys_xy_print
+            WHERE sys_xy_print.cookie_id IN (cookie_id);
+
+            END;
+
+            end;
+            ]]>
+      </sql>
+    </changeSet>
+
+</databaseChangeLog>
