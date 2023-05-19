@@ -3,22 +3,27 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
 
-    <changeSet author="Alexandros Porfiris" id="test_all">
+    <changeSet author="Alexandros Porfiris" id="ENBD-324">
         <sql>
             CREATE TABLE test_table_all(
                 Column_1 VARCHAR2(50) NOT NULL,
                 Column_2 VARCHAR2(50) NOT NULL);
         </sql>
-        <rollback>
-
-        </rollback>
     </changeSet>
 
-    <changeSet author="Alexandros Porfiris" id="test_all_1">
+    <changeSet author="Alexandros Porfiris" context="dev" id="DEV">
         <sql>
-            ALTER TABLE test_table_all(
-                                           Column_1 VARCHAR2(50) NOT NULL,
-                                           Column_2 VARCHAR2(50) NOT NULL);
+            CREATE TABLE test_table_dev(
+                Column_1 VARCHAR2(50) NOT NULL,
+                Column_2 VARCHAR2(50) NOT NULL);
+        </sql>
+    </changeSet>
+
+    <changeSet author="Alexandros Porfiris" context="prod" id="PROD">
+        <sql>
+            CREATE TABLE test_table_prod(
+                Column_1 VARCHAR2(50) NOT NULL,
+                Column_2 VARCHAR2(50) NOT NULL);
         </sql>
     </changeSet>
 

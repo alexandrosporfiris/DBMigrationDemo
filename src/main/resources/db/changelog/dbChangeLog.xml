@@ -6,8 +6,6 @@
          http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
 
     <!--The order of the files is also the order of execution-->
-    <!--Also, the number of the folder inside ../all/ dictates the order, if the changeSet is not annotated  to run last or first-->
-    <includeAll path="../all/" relativeToChangelogFile="true"></includeAll>
     <includeAll path="1.scripts" relativeToChangelogFile="true"></includeAll>
     <includeAll path="2.packages" relativeToChangelogFile="true"></includeAll>
     <includeAll path="3.always" relativeToChangelogFile="true"></includeAll>
